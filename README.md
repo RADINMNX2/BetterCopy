@@ -14,7 +14,7 @@ BetterCopy is built around a simple, uncompromising brand promise:
 * **No Admin:** Runs entirely in user space. No elevation prompts, no UAC bypasses.
 * **No Injection:** Zero DLL injection into `explorer.exe` or hooking of `SHFileOperation`.
 * **No Residue:** No background services, tray clutter, or leftover registry junk.
-* **Disappears when it's done:** Idle resource usage is virtually zero. It stays out of your way until called.
+* **Low Footprint:** CPU usage is near-zero when idle (~0.01% from the background daemon polling 100x/sec for focus/hotkeys). Memory usage sits at ~30–50MB of RAM (required to keep the Tauri/WebView2 dashboard engine pre-warmed for instant paste response).
 
 ---
 
@@ -133,6 +133,21 @@ bcopy.exe move "C:\source\path" "D:\dest\path"
    npm install
    npm run tauri build
    ```
+
+---
+
+## ✦ FAQ
+
+#### Q: Why does the dashboard show a spinner/loading state before the copy starts?
+**A:** Before transferring a single byte, BetterCopy performs a complete **pre-flight directory traversal (tree walk)** and **safety checks** (calculating total sizes, verifying write permissions, checking for copy-into-self loops, and ensuring there is enough free disk space). 
+
+Standard Windows Explorer starts copying immediately and guesses the total size/time on the fly (which is why the progress bar fluctuates wildly or fails halfway through due to out-of-space errors). BetterCopy spends a brief moment upfront building an inventory so it can categorize files into small/large queues and allocate threads optimally. The actual transfer is so fast that the total end-to-end time is still significantly shorter!
+
+#### Q: Why does `Ctrl+Shift+V` sometimes not do anything?
+**A:** BetterCopy uses **focus gating** to protect your workflow. The global hotkey is only active when standard Windows Explorer (`CabinetWClass`) or the Desktop is focused. Additionally, if you are actively renaming a file (your cursor is in an Explorer rename text box), the hotkey is automatically suspended to allow you to type or paste naturally without triggering a file copy.
+
+#### Q: Does it support network drives / UNC paths?
+**A:** No, remote/UNC network paths are currently rejected during preflight. BetterCopy is optimized for local bus protocols (SATA, NVMe, USB) using low-level device IOCTL queries to tune concurrency. Network share copying behaves differently under latency constraints and is planned for a future release.
 
 ---
 
