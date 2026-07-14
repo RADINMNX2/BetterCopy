@@ -6,6 +6,8 @@
 
 **BetterCopy** is an auto-tuning, parallel copy engine for Windows. It provides a blistering-fast replacement for native file copy operations, bound directly to a global hotkey (**`Ctrl+Shift+V`**) that activates only when you focus Windows Explorer or the Desktop.
 
+> BetterCopy is designed to maximize speed on modern solid-state storage (NVMe, SSDs, UASP USBs). It does not improve copy performance on mechanical hard drives (HDDs), where the engine auto-detects seek-penalty characteristics and safely falls back to a single-threaded sequential copy to prevent disk head thrashing.
+
 ---
 
 ## ✦ The Philosophy
