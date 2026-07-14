@@ -138,16 +138,14 @@ bcopy.exe move "C:\source\path" "D:\dest\path"
 
 ## ✦ FAQ
 
-#### Q: Why does the dashboard show a spinner/loading state before the copy starts?
-**A:** Before transferring a single byte, BetterCopy performs a complete **pre-flight directory traversal (tree walk)** and **safety checks** (calculating total sizes, verifying write permissions, checking for copy-into-self loops, and ensuring there is enough free disk space). 
-
-Standard Windows Explorer starts copying immediately and guesses the total size/time on the fly (which is why the progress bar fluctuates wildly or fails halfway through due to out-of-space errors). BetterCopy spends a brief moment upfront building an inventory so it can categorize files into small/large queues and allocate threads optimally. The actual transfer is so fast that the total end-to-end time is still significantly shorter!
+#### Q: Why does the dashboard show a spinner before the copy starts?
+**A:** BetterCopy does a fast, upfront directory traversal and pre-flight checks (disk space, permissions, and folder loops) before copying. This ensures it doesn't fail mid-operation and helps classify files into optimal small/large queues. The actual transfer starts shortly after and is so fast that the total end-to-end time is still much shorter.
 
 #### Q: Why does `Ctrl+Shift+V` sometimes not do anything?
-**A:** BetterCopy uses **focus gating** to protect your workflow. The global hotkey is only active when standard Windows Explorer (`CabinetWClass`) or the Desktop is focused. Additionally, if you are actively renaming a file (your cursor is in an Explorer rename text box), the hotkey is automatically suspended to allow you to type or paste naturally without triggering a file copy.
+**A:** BetterCopy uses focus-gating. The hotkey only triggers when Windows Explorer or the Desktop is active. If you are renaming a file or focused in another app, the keypress passes through naturally.
 
 #### Q: Does it support network drives / UNC paths?
-**A:** No, remote/UNC network paths are currently rejected during preflight. BetterCopy is optimized for local bus protocols (SATA, NVMe, USB) using low-level device IOCTL queries to tune concurrency. Network share copying behaves differently under latency constraints and is planned for a future release.
+**A:** No, remote/UNC network paths are currently rejected. BetterCopy is optimized for local storage (SATA, NVMe, USB) auto-tuning. Network share support is planned for a future release.
 
 ---
 
