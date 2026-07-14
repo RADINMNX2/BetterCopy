@@ -67,6 +67,9 @@ We benchmarked BetterCopy against Microsoft's industry-standard `robocopy` using
 
 *BetterCopy achieves a **64.9% throughput improvement** over the fastest possible Robocopy configuration, and is **12x to 15x faster** than native Windows Explorer (with Defender disabled) when copying tiny files on NVMe drives.*
 
+> [!WARNING]
+> **Benchmarking Disclaimer (n=1):** All benchmark results were collected in a single test environment (n=1) on a **Micron MTFDKBA1T0TFH** NVMe SSD with Windows Defender disabled. Actual performance will vary depending on your drive controller, thermal limits, filesystem overhead, and antivirus active scanning configuration.
+
 ---
 
 ## ✦ Architecture
