@@ -13,6 +13,9 @@ pub struct CopyItem {
     pub dest_wide: Vec<u16>,
     pub size: u64,
     pub is_dir: bool,
+    pub creation_time: u64,
+    pub last_access_time: u64,
+    pub last_write_time: u64,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -79,6 +82,10 @@ fn walk_dir(
 
         let src_wide = encode_wide_path(&src_path);
         let dest_wide = encode_wide_path(&dest_path);
+        
+        let creation_time = metadata.creation_time();
+        let last_access_time = metadata.last_access_time();
+        let last_write_time = metadata.last_write_time();
 
         if metadata.is_dir() {
             work_list.dirs.push(CopyItem {
@@ -88,6 +95,9 @@ fn walk_dir(
                 dest_wide,
                 size: 0,
                 is_dir: true,
+                creation_time,
+                last_access_time,
+                last_write_time,
             });
             walk_dir(&src_path, &dest_path, work_list)?;
         } else {
@@ -99,6 +109,9 @@ fn walk_dir(
                 dest_wide,
                 size,
                 is_dir: false,
+                creation_time,
+                last_access_time,
+                last_write_time,
             };
             work_list.total_files += 1;
             work_list.total_bytes += size;
@@ -136,6 +149,10 @@ pub fn build_work_list(sources: &[PathBuf], dest_root: &Path) -> std::io::Result
         
         let src_wide = encode_wide_path(&src_long);
         let dest_wide = encode_wide_path(&target_dest);
+        
+        let creation_time = metadata.creation_time();
+        let last_access_time = metadata.last_access_time();
+        let last_write_time = metadata.last_write_time();
 
         if metadata.is_dir() {
             work_list.dirs.push(CopyItem {
@@ -145,6 +162,9 @@ pub fn build_work_list(sources: &[PathBuf], dest_root: &Path) -> std::io::Result
                 dest_wide,
                 size: 0,
                 is_dir: true,
+                creation_time,
+                last_access_time,
+                last_write_time,
             });
             walk_dir(&src_long, &target_dest, &mut work_list)?;
         } else {
@@ -156,6 +176,9 @@ pub fn build_work_list(sources: &[PathBuf], dest_root: &Path) -> std::io::Result
                 dest_wide,
                 size,
                 is_dir: false,
+                creation_time,
+                last_access_time,
+                last_write_time,
             };
             work_list.total_files += 1;
             work_list.total_bytes += size;

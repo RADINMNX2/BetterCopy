@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, FILETIME};
 use windows::Win32::Storage::FileSystem::{
-    CopyFileExW, CreateFileW, GetFileTime, MoveFileExW, ReadFile, SetFileTime, WriteFile,
+    CopyFileExW, CreateFileW, MoveFileExW, ReadFile, SetFileTime, WriteFile,
     SetFilePointerEx, SetEndOfFile, FILE_BEGIN,
     CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_SEQUENTIAL_SCAN, FILE_SHARE_READ,
     FILE_SHARE_WRITE, LPPROGRESS_ROUTINE_CALLBACK_REASON, MOVEFILE_COPY_ALLOWED,
@@ -69,12 +69,15 @@ unsafe extern "system" fn copy_progress_routine(
 }
 
 /// Direct low-overhead file copy function implementing "One handle, all operations" rule
-/// with size pre-allocation and pre-allocated path and buffer slices to eliminate heap allocation overhead.
+/// with cached timestamps, single-pass reads for small files, and selective pre-allocation.
 fn copy_file_direct(
     src_wide: &[u16],
     dest_wide: &[u16],
     buffer: &mut [u8],
     size: u64,
+    creation_time: u64,
+    last_access_time: u64,
+    last_write_time: u64,
     global_state: &ProgressState,
 ) -> Result<(), String> {
     unsafe {
@@ -111,8 +114,8 @@ fn copy_file_direct(
             }
         };
 
-        // Pre-allocate file size to prevent fragmentation and speed up NTFS writes
-        if size > 0 {
+        // Pre-allocate file size only for larger files (>= 128KB) to avoid system call overhead on tiny files
+        if size >= 128 * 1024 {
             if SetFilePointerEx(dest_h, size as i64, None, FILE_BEGIN).is_ok() {
                 let _ = SetEndOfFile(dest_h);
                 // Seek back to start
@@ -120,62 +123,95 @@ fn copy_file_direct(
             }
         }
 
-        loop {
-            if global_state.cancel_flag.load(Ordering::Relaxed) {
-                let _ = CloseHandle(src_h);
-                let _ = CloseHandle(dest_h);
-                let _ = windows::Win32::Storage::FileSystem::DeleteFileW(PCWSTR(dest_wide.as_ptr()));
-                return Err("Cancelled".to_string());
+        if size > 0 {
+            if size <= buffer.len() as u64 {
+                // Single-pass read/write: avoids the redundant second ReadFile query loop
+                let mut bytes_read = 0u32;
+                let read_res = ReadFile(
+                    src_h,
+                    Some(buffer),
+                    Some(&mut bytes_read as *mut u32),
+                    None,
+                );
+
+                if read_res.is_ok() && bytes_read > 0 {
+                    let mut bytes_written = 0u32;
+                    let write_res = WriteFile(
+                        dest_h,
+                        Some(&buffer[..bytes_read as usize]),
+                        Some(&mut bytes_written as *mut u32),
+                        None,
+                    );
+
+                    if write_res.is_err() || bytes_written != bytes_read {
+                        let _ = CloseHandle(src_h);
+                        let _ = CloseHandle(dest_h);
+                        let _ = windows::Win32::Storage::FileSystem::DeleteFileW(PCWSTR(dest_wide.as_ptr()));
+                        return Err("Write failed".to_string());
+                    }
+                    global_state.bytes_completed.fetch_add(bytes_written as u64, Ordering::SeqCst);
+                }
+            } else {
+                // Multi-pass fallback for larger files
+                loop {
+                    if global_state.cancel_flag.load(Ordering::Relaxed) {
+                        let _ = CloseHandle(src_h);
+                        let _ = CloseHandle(dest_h);
+                        let _ = windows::Win32::Storage::FileSystem::DeleteFileW(PCWSTR(dest_wide.as_ptr()));
+                        return Err("Cancelled".to_string());
+                    }
+
+                    let mut bytes_read = 0u32;
+                    let read_res = ReadFile(
+                        src_h,
+                        Some(buffer),
+                        Some(&mut bytes_read as *mut u32),
+                        None,
+                    );
+
+                    if read_res.is_err() || bytes_read == 0 {
+                        break;
+                    }
+
+                    let mut bytes_written = 0u32;
+                    let write_res = WriteFile(
+                        dest_h,
+                        Some(&buffer[..bytes_read as usize]),
+                        Some(&mut bytes_written as *mut u32),
+                        None,
+                    );
+
+                    if write_res.is_err() || bytes_written != bytes_read {
+                        let _ = CloseHandle(src_h);
+                        let _ = CloseHandle(dest_h);
+                        let _ = windows::Win32::Storage::FileSystem::DeleteFileW(PCWSTR(dest_wide.as_ptr()));
+                        return Err("Write failed".to_string());
+                    }
+
+                    global_state.bytes_completed.fetch_add(bytes_written as u64, Ordering::SeqCst);
+                }
             }
-
-            let mut bytes_read = 0u32;
-            let read_res = ReadFile(
-                src_h,
-                Some(buffer),
-                Some(&mut bytes_read as *mut u32),
-                None,
-            );
-
-            if read_res.is_err() || bytes_read == 0 {
-                break;
-            }
-
-            let mut bytes_written = 0u32;
-            let write_res = WriteFile(
-                dest_h,
-                Some(&buffer[..bytes_read as usize]),
-                Some(&mut bytes_written as *mut u32),
-                None,
-            );
-
-            if write_res.is_err() || bytes_written != bytes_read {
-                let _ = CloseHandle(src_h);
-                let _ = CloseHandle(dest_h);
-                let _ = windows::Win32::Storage::FileSystem::DeleteFileW(PCWSTR(dest_wide.as_ptr()));
-                return Err("Write failed".to_string());
-            }
-
-            global_state.bytes_completed.fetch_add(bytes_written as u64, Ordering::SeqCst);
         }
 
-        // Copy timestamps (creation, last access, last write)
-        let mut creation_time = FILETIME::default();
-        let mut last_access_time = FILETIME::default();
-        let mut last_write_time = FILETIME::default();
-        let time_res = GetFileTime(
-            src_h,
-            Some(&mut creation_time),
-            Some(&mut last_access_time),
-            Some(&mut last_write_time),
+        // Apply pre-cached timestamps directly, deleting the GetFileTime syscall
+        let ft_create = FILETIME {
+            dwLowDateTime: (creation_time & 0xFFFFFFFF) as u32,
+            dwHighDateTime: (creation_time >> 32) as u32,
+        };
+        let ft_access = FILETIME {
+            dwLowDateTime: (last_access_time & 0xFFFFFFFF) as u32,
+            dwHighDateTime: (last_access_time >> 32) as u32,
+        };
+        let ft_write = FILETIME {
+            dwLowDateTime: (last_write_time & 0xFFFFFFFF) as u32,
+            dwHighDateTime: (last_write_time >> 32) as u32,
+        };
+        let _ = SetFileTime(
+            dest_h,
+            Some(&ft_create),
+            Some(&ft_access),
+            Some(&ft_write),
         );
-        if time_res.is_ok() {
-            let _ = SetFileTime(
-                dest_h,
-                Some(&creation_time),
-                Some(&last_access_time),
-                Some(&last_write_time),
-            );
-        }
 
         let _ = CloseHandle(src_h);
         let _ = CloseHandle(dest_h);
@@ -473,7 +509,16 @@ pub fn run_engine(
                         if c_flag.load(Ordering::Relaxed) {
                             break;
                         }
-                        if let Err(e) = copy_file_direct(&item.src_wide, &item.dest_wide, &mut buffer, item.size, &state) {
+                        if let Err(e) = copy_file_direct(
+                            &item.src_wide,
+                            &item.dest_wide,
+                            &mut buffer,
+                            item.size,
+                            item.creation_time,
+                            item.last_access_time,
+                            item.last_write_time,
+                            &state,
+                        ) {
                             state.failed_files.lock().unwrap().push((item.src_path.clone(), e));
                         }
                     }
