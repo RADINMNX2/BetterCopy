@@ -18,7 +18,8 @@
         "visible": false,
         "transparent": true,
         "decorations": false,
-        "label": "main"
+        "label": "main",
+        "alwaysOnTop": true
       }
     ],
     "security": {

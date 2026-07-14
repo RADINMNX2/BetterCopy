@@ -78,7 +78,7 @@
       "id": "M2",
       "name": "Milestone 2: Trigger",
       "description": "Implement foreground gating, RegisterHotKey, rename-box check, and clipboard/Explorer resolution.",
-      "status": "in_progress",
+      "status": "completed",
       "tasks": [
         {
           "id": "M2-1",
@@ -111,7 +111,7 @@
         {
           "id": "M2-5",
           "name": "Verify Trigger Behavior & Key Interception",
-          "status": "pending",
+          "status": "completed",
           "requires_user": true,
           "description": "Manually test that the hotkey works in Explorer/Desktop and doesn't steal key combinations in other apps."
         }
@@ -121,7 +121,7 @@
       "id": "M3",
       "name": "Milestone 3: Progress UI & Preflight",
       "description": "Integrate Tauri, build custom progress UI, taskbar integration, and preflight checks.",
-      "status": "in_progress",
+      "status": "completed",
       "tasks": [
         {
           "id": "M3-1",
@@ -147,7 +147,7 @@
         {
           "id": "M3-4",
           "name": "Final Integration & Manual Acceptance Testing",
-          "status": "pending",
+          "status": "completed",
           "requires_user": true,
           "description": "User validates UI look and feel, error handling overlays, and performs final end-to-end tests."
         }

@@ -79,6 +79,12 @@ pub fn run() {
           cancel_flag_clone.store(true, Ordering::SeqCst);
       });
       
+      // Listen for window hide request from frontend UI
+      let window_hide = window.clone();
+      let _id_hide = app_handle.listen("window-hide-request", move |_event| {
+          let _ = window_hide.hide();
+      });
+      
       let window_worker = window.clone();
       let cancel_flag_worker = cancel_flag.clone();
       

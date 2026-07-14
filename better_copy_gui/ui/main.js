@@ -20,12 +20,34 @@ function formatTime(seconds) {
 
 // Window control bindings
 document.getElementById('close-btn').addEventListener('click', async () => {
-  await emit('copy-cancel');
-  await appWindow.hide();
+  try {
+    await emit('copy-cancel');
+  } catch (e) {
+    console.error(e);
+  }
+  try {
+    await appWindow.hide();
+  } catch (e) {
+    console.error(e);
+  }
 });
 
 document.getElementById('cancel-btn').addEventListener('click', async () => {
-  await emit('copy-cancel');
+  try {
+    await emit('copy-cancel');
+  } catch (e) {
+    console.error(e);
+  }
+});
+
+// Custom draggable header hook to bypass OS/browser transparent drag region bugs
+document.querySelector('.window-header').addEventListener('mousedown', (e) => {
+  if (e.target.closest('button')) return;
+  try {
+    appWindow.startDragging();
+  } catch (err) {
+    console.error(err);
+  }
 });
 
 document.getElementById('error-close-btn').addEventListener('click', () => {
@@ -109,14 +131,22 @@ listen('copy-complete', (event) => {
   } else if (was_cancelled) {
     document.getElementById('status-msg').innerText = 'Cancelled by user.';
     setTimeout(async () => {
-      await appWindow.hide();
+      try {
+        await appWindow.hide();
+      } catch (e) {
+        console.error(e);
+      }
     }, 1500);
   } else {
     document.getElementById('status-msg').innerText = 'Successfully completed!';
     document.getElementById('progress-percent').innerText = '100%';
     document.getElementById('progress-fill').style.width = '100%';
     setTimeout(async () => {
-      await appWindow.hide();
+      try {
+        await appWindow.hide();
+      } catch (e) {
+        console.error(e);
+      }
     }, 1500);
   }
 });
