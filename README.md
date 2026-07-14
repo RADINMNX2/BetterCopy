@@ -6,9 +6,6 @@
 
 **BetterCopy** is an auto-tuning, parallel copy engine for Windows. It provides a blistering-fast replacement for native file copy operations, bound directly to a global hotkey (**`Ctrl+Shift+V`**) that activates only when you focus Windows Explorer or the Desktop.
 
-> *"Why is this not just how Windows works?"*
-> — *Speculative top HN comment*
-
 ---
 
 ## ✦ The Philosophy
@@ -142,3 +139,39 @@ bcopy.exe move "C:\source\path" "D:\dest\path"
 ## ✦ License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+---
+
+## ✦ Roadmap & TODO
+
+### Core Copy Engine
+- [x] **Focus-Gated Global Hotkey (`Ctrl+Shift+V`)** — Activates only when standard Windows Explorer or Desktop is in the foreground.
+- [x] **Rename Guard** — Passes keystroke through when editing file names.
+- [x] **Context Path Resolution** — Dynamically queries active Explorer via COM APIs and clipboard `CF_HDROP`.
+- [x] **Storage Profiling & Auto-Tuning** — Detects HDD vs SSD (seek penalty) and UASP vs BOT USB via Win32 storage IOCTLs to auto-select optimal thread concurrency.
+- [x] **Path & Loop Protection** — Bypasses `MAX_PATH` (using `\\?\` prefix) and skips reparse points (symlinks/junctions).
+- [x] **Dual-Queue Architecture** — Separate worker pools for small (<1MB) and large (>=1MB) files to prevent starvation.
+- [x] **Direct I/O & Low-Overhead Copy** — One-handle-rule implementation with selective pre-allocation and cached metadata writes.
+- [x] **Unbuffered I/O** — Bypasses system file caching for large files.
+- [x] **Two-Phase Moves** — Safe transaction-like moves (copy-verify-delete) and same-volume rename optimization.
+- [x] **Preflight Safeguards** — Performs space checks, UNC rejection, write probing, and self-copy detection.
+- [x] **Sleep Prevention** — Inhibits system standby during copy using Win32 execution state management.
+- [x] **Job Cancellation** — Safe abort triggers with rollback of partial target files.
+- [ ] **Verify-on-Write** — Integrity hash verification (e.g., xxHash/SHA-256) and checksum manifest generation.
+- [ ] **In-Flight Pause & Resume** — Support pausing and resuming active copy processes.
+- [ ] **Device-Gone Resiliency** — Automatically pause and poll/retry when external drives disconnect.
+- [ ] **ReFS Block Cloning** — Support native fast cloning on ReFS drives.
+- [ ] **UAC Elevation Prompts** — Offer privilege elevation on write permission failures.
+
+### GUI & User Experience
+- [x] **Tauri Integration** — Self-contained background application with system tray and single-instance locks.
+- [x] **Transient Progress Dashboard** — Borderless, centered window displaying queue details, speed (MB/s), ETA, and taskbar progress states.
+- [x] **Windows Aesthetics** — Modern interface styling utilizing Windows Mica/Acrylic transparency blur.
+- [x] **Automatic Hide/Dismiss** — Auto-dismisses window upon completion of all jobs.
+- [ ] **Copy/Move Pause Buttons** — Frontend buttons to pause/resume copy actions in the GUI.
+- [ ] **Detailed Error log viewer** — Detailed report of failures within the UI.
+
+### Packaging & Benchmarking
+- [x] **Symmetrical Benchmarking Harness** — PowerShell fixture generator and test harness.
+- [ ] **MSI Installer Package** — Professional installer creation.
+- [ ] **Cross-Platform Ports** — Adapt core parallel copy functionality for macOS and Linux.
