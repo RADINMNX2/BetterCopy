@@ -143,20 +143,6 @@ pub fn run() {
               let mut preflight_failed = false;
               let mut preflight_errors = Vec::new();
               
-              // 1. Scope check (no remote / UNC paths)
-              let dest_profile = better_copy_core::profiler::profile_device(&dest);
-              if dest_profile.is_remote {
-                  preflight_failed = true;
-                  preflight_errors.push((dest.display().to_string(), "Remote destinations are not supported.".to_string()));
-              }
-              for src in &sources {
-                  let src_profile = better_copy_core::profiler::profile_device(src);
-                  if src_profile.is_remote {
-                      preflight_failed = true;
-                      preflight_errors.push((src.display().to_string(), "Remote sources are not supported.".to_string()));
-                  }
-              }
-              
               // 2. Copy-into-self check
               for src in &sources {
                   if dest.starts_with(src) {
