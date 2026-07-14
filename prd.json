@@ -1,0 +1,157 @@
+{
+  "project_name": "BetterCopy",
+  "description": "Parallel copy engine for Windows, bound to Ctrl+Shift+V",
+  "current_milestone": "Milestone 1: Engine (Headless)",
+  "milestones": [
+    {
+      "id": "M1",
+      "name": "Milestone 1: Engine (Headless)",
+      "description": "Build the CLI tool (bcopy) with seek-penalty and UASP detection, small/large file queues, error handling, two-phase move, and self-contained benchmark script.",
+      "status": "in_progress",
+      "tasks": [
+        {
+          "id": "M1-1",
+          "name": "Create prd.json and workspace configuration",
+          "status": "completed",
+          "requires_user": false,
+          "description": "Establish progress tracking and base files."
+        },
+        {
+          "id": "M1-2",
+          "name": "Initialize Cargo Workspace & Gitignore",
+          "status": "completed",
+          "requires_user": false,
+          "description": "Setup Rust workspace structure containing bcopy binary and core library."
+        },
+        {
+          "id": "M1-3",
+          "name": "Implement Win32 Device Profiler",
+          "status": "completed",
+          "requires_user": false,
+          "description": "Identify seek penalty (HDD vs SSD) and drive/enclosure type (UASP vs BOT) using IOCTLs."
+        },
+        {
+          "id": "M1-4",
+          "name": "Implement Tree Walk & Queue Classifier",
+          "status": "completed",
+          "requires_user": false,
+          "description": "Traverse directory trees safely (avoiding reparse/junction loops, supporting MAX_PATH bypass) and categorize into small (<1MB) vs large (>=1MB) queues."
+        },
+        {
+          "id": "M1-5",
+          "name": "Implement Multi-threaded Copy Engine",
+          "status": "completed",
+          "requires_user": false,
+          "description": "Execute copying using dedicated small/large file worker pools, implementing the one-handle rule, unbuffered I/O for large files, and robust error handling."
+        },
+        {
+          "id": "M1-6",
+          "name": "Implement Two-Phase Move",
+          "status": "completed",
+          "requires_user": false,
+          "description": "Ensure transactional safety for moves: copy first, verify, then delete. Optimize same-volume moves via renaming."
+        },
+        {
+          "id": "M1-7",
+          "name": "Implement Device-Gone Resilience & Cancel/Pause",
+          "status": "completed",
+          "requires_user": false,
+          "description": "Detect USB disconnects to pause/poll. Support thread-execution state to prevent sleep, clean partial files on cancel."
+        },
+        {
+          "id": "M1-8",
+          "name": "Create Benchmark Harness (bench/run.ps1)",
+          "status": "completed",
+          "requires_user": false,
+          "description": "Generate 800MB tiny-file fixture and benchmark bcopy vs robocopy."
+        },
+        {
+          "id": "M1-9",
+          "name": "Run Benchmarks & Collect Results",
+          "status": "pending",
+          "requires_user": true,
+          "description": "Execute benchmark on user's specific hardware to verify performance advantages."
+        }
+      ]
+    },
+    {
+      "id": "M2",
+      "name": "Milestone 2: Trigger",
+      "description": "Implement foreground gating, RegisterHotKey, rename-box check, and clipboard/Explorer resolution.",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "M2-1",
+          "name": "Setup Message-Only Win32 Window & Hotkey Registration",
+          "status": "pending",
+          "requires_user": false,
+          "description": "Register Ctrl+Shift+V globally but activate only when Explorer/Desktop is focused."
+        },
+        {
+          "id": "M2-2",
+          "name": "Implement Foreground Gating & Rename Guard",
+          "status": "pending",
+          "requires_user": false,
+          "description": "Use SetWinEventHook for focus shifts. Unregister hotkey or pass-through if focus is in a rename Edit box."
+        },
+        {
+          "id": "M2-3",
+          "name": "Resolve Clipboard Source List & Drop Effects",
+          "status": "pending",
+          "requires_user": false,
+          "description": "Read CF_HDROP and CFSTR_PREFERREDDROPEFFECT (cut vs copy) from Windows clipboard."
+        },
+        {
+          "id": "M2-4",
+          "name": "Resolve Explorer Destination Path",
+          "status": "pending",
+          "requires_user": false,
+          "description": "Enumerate shell windows using COM (IShellWindows) to find the path of the active Explorer window."
+        },
+        {
+          "id": "M2-5",
+          "name": "Verify Trigger Behavior & Key Interception",
+          "status": "pending",
+          "requires_user": true,
+          "description": "Manually test that the hotkey works in Explorer/Desktop and doesn't steal key combinations in other apps."
+        }
+      ]
+    },
+    {
+      "id": "M3",
+      "name": "Milestone 3: Progress UI & Preflight",
+      "description": "Integrate Tauri, build custom progress UI, taskbar integration, and preflight checks.",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "M3-1",
+          "name": "Initialize Tauri & Create Progress Window Lifecycle",
+          "status": "pending",
+          "requires_user": false,
+          "description": "Create hidden progress window on startup, support native taskbar progress bar states, and control show/hide behavior."
+        },
+        {
+          "id": "M3-2",
+          "name": "Implement Preflight Checks",
+          "status": "pending",
+          "requires_user": false,
+          "description": "Check free space, reject UNC/network paths, check copy-into-self, and run writability probe."
+        },
+        {
+          "id": "M3-3",
+          "name": "Develop Progress UI Dashboard",
+          "status": "pending",
+          "requires_user": false,
+          "description": "Build high-aesthetic HTML/CSS page showing aggregated speed, ETA, decision lines, and multiple stacked jobs."
+        },
+        {
+          "id": "M3-4",
+          "name": "Final Integration & Manual Acceptance Testing",
+          "status": "pending",
+          "requires_user": true,
+          "description": "User validates UI look and feel, error handling overlays, and performs final end-to-end tests."
+        }
+      ]
+    }
+  ]
+}

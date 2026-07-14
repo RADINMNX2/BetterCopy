@@ -1,0 +1,6 @@
+[workspace]
+resolver = "2"
+members = [
+    "better_copy_core",
+    "bcopy"
+]
