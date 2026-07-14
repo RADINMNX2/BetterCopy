@@ -53,6 +53,17 @@ if (cancelBtn) {
   });
 }
 
+const prepCancelBtn = document.getElementById('prep-cancel-btn');
+if (prepCancelBtn) {
+  prepCancelBtn.addEventListener('click', async () => {
+    try {
+      await emit('copy-cancel');
+    } catch (e) {
+      console.error(e);
+    }
+  });
+}
+
 document.getElementById('error-close-btn').addEventListener('click', async () => {
   document.getElementById('error-overlay').style.display = 'none';
   try {
@@ -174,6 +185,10 @@ function drawSpeedGraph(percent, speed) {
 listen('copy-start', (event) => {
   const { sources, destination, description, concurrency, total_files, total_bytes } = event.payload;
   
+  // Show preparing loader, hide main dashboard
+  document.getElementById('preparing-view').style.display = 'flex';
+  document.getElementById('dashboard').style.display = 'none';
+  
   // Reset graph history and clear canvas
   speedHistory = [];
   currentPercent = 0;
@@ -192,7 +207,6 @@ listen('copy-start', (event) => {
   document.getElementById('stat-eta').innerText = 'Calculating...';
   
   document.getElementById('progress-percent').innerText = '0%';
-  document.getElementById('progress-fill').style.width = '0%';
   
   const total_mb = (total_bytes / 1048576).toFixed(1);
   document.getElementById('progress-bytes').innerText = `0.0 MB / ${total_mb} MB`;
@@ -221,6 +235,10 @@ listen('copy-start', (event) => {
 listen('copy-progress', (event) => {
   const { files_completed, bytes_completed, speed_mbps, eta_seconds, total_files, total_bytes } = event.payload;
   
+  // Hide preparing loader, show main dashboard
+  document.getElementById('preparing-view').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'flex';
+  
   document.getElementById('stat-files').innerText = `${files_completed} / ${total_files}`;
   document.getElementById('stat-speed').innerText = `${speed_mbps.toFixed(1)} MB/s`;
   
@@ -234,7 +252,6 @@ listen('copy-progress', (event) => {
   
   const percent = total_bytes > 0 ? Math.round((bytes_completed / total_bytes) * 100) : 0;
   document.getElementById('progress-percent').innerText = `${percent}%`;
-  document.getElementById('progress-fill').style.width = `${percent}%`;
   
   const bytes_mb = (bytes_completed / 1048576).toFixed(1);
   const total_mb = (total_bytes / 1048576).toFixed(1);
@@ -250,6 +267,10 @@ listen('copy-progress', (event) => {
 
 listen('copy-complete', (event) => {
   const { files_copied, bytes_copied, failures, was_cancelled } = event.payload;
+  
+  // Ensure main dashboard/overlay is shown on completion
+  document.getElementById('preparing-view').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'flex';
   
   stopThreadAnimation();
   
@@ -278,7 +299,6 @@ listen('copy-complete', (event) => {
     document.getElementById('status-msg').innerText = 'Done';
     document.getElementById('cancel-btn').style.display = 'none';
     document.getElementById('progress-percent').innerText = '100%';
-    document.getElementById('progress-fill').style.width = '100%';
     setTimeout(async () => {
       try {
         await appWindow.hide();

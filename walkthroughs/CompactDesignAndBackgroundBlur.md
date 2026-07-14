@@ -19,7 +19,8 @@ We modified [tauri.conf.json](file:///c:/Users/kaika/BP/gitprojects/BetterCopy/b
 ### 3. Drag Target & Graph Config
 We modified [main.js](file:///c:/Users/kaika/BP/gitprojects/BetterCopy/better_copy_gui/ui/main.js) and [index.html](file:///c:/Users/kaika/BP/gitprojects/BetterCopy/better_copy_gui/ui/index.html):
 - Replaced the green progress bar with the canvas speed graph (`.graph-container`), placing it directly under the stats grid.
-- Hid the legacy progress bar (`.progress-container`) via inline styles, keeping the DOM structure for JavaScript compatibility.
+- Cleaned up the codebase by completely removing the legacy progress bar HTML elements and all corresponding `#progress-fill` style width updates inside [main.js](file:///c:/Users/kaika/BP/gitprojects/BetterCopy/better_copy_gui/ui/main.js), resolving the crash issue.
+- Added a **Preparing View** overlay (`#preparing-view`) showing a CSS loader spinner while the copy engine builds directory trees and profiles drives.
 - Shortened copy status labels in JS callbacks (e.g. using `Done` instead of `Successfully completed!` and `Cancelled` instead of `Cancelled by user.`).
 - Programmatically hide the `Cancel` text button on transfer completion to save space.
 - Configured the `<canvas>` speed graph width to `288` inside `index.html` (matching the horizontal content width inside the padded container).

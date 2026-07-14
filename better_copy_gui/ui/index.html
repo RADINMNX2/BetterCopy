@@ -10,8 +10,17 @@
   <div class="window-container" data-tauri-drag-region>
     <!-- Content Area -->
     <main class="window-content" data-tauri-drag-region>
-      <!-- Overall Progress Dashboard -->
-      <div class="dashboard" data-tauri-drag-region>
+      
+      <!-- Preparing View (Shown during directory walking/profiling) -->
+      <div class="preparing-view" id="preparing-view" data-tauri-drag-region>
+        <div class="spinner"></div>
+        <div class="preparing-text" id="preparing-text">Preparing copy...</div>
+        <button class="mini-cancel-btn" id="prep-cancel-btn">Cancel</button>
+      </div>
+
+      <!-- Overall Progress Dashboard (Hidden during preparation) -->
+      <div class="dashboard" id="dashboard" style="display: none;" data-tauri-drag-region>
+        <!-- Stats Grid -->
         <div class="stats-grid" data-tauri-drag-region>
           <div class="stat-card">
             <span class="label">Speed</span>
@@ -24,13 +33,6 @@
           <div class="stat-card">
             <span class="label">Files</span>
             <span class="value" id="stat-files">0 / 0</span>
-          </div>
-        </div>
-
-        <!-- Hidden progress elements kept in DOM for compatibility with JS bindings -->
-        <div class="progress-container" style="display: none;">
-          <div class="progress-bar-bg">
-            <div class="progress-bar-fill" id="progress-fill" style="width: 0%;"></div>
           </div>
         </div>
 
