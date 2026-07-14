@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -10,6 +11,7 @@ use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, FILETIME};
 use windows::Win32::Storage::FileSystem::{
     CopyFileExW, CreateFileW, GetFileTime, MoveFileExW, ReadFile, SetFileTime, WriteFile,
+    SetFilePointerEx, SetEndOfFile, FILE_BEGIN,
     CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_SEQUENTIAL_SCAN, FILE_SHARE_READ,
     FILE_SHARE_WRITE, LPPROGRESS_ROUTINE_CALLBACK_REASON, MOVEFILE_COPY_ALLOWED,
     MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, OPEN_EXISTING,
@@ -67,10 +69,11 @@ unsafe extern "system" fn copy_progress_routine(
 }
 
 /// Direct low-overhead file copy function implementing "One handle, all operations" rule
-/// to bypass high API setup overhead of CopyFileExW for tiny files.
+/// to bypass high API setup overhead of CopyFileExW for tiny files, with size pre-allocation.
 fn copy_file_direct(
     src: &Path,
     dest: &Path,
+    size: u64,
     global_state: &ProgressState,
 ) -> Result<(), String> {
     let src_wide: Vec<u16> = src.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
@@ -109,6 +112,15 @@ fn copy_file_direct(
                 return Err("Failed to create destination file".to_string());
             }
         };
+
+        // Pre-allocate file size to prevent fragmentation and speed up NTFS writes
+        if size > 0 {
+            if SetFilePointerEx(dest_h, size as i64, None, FILE_BEGIN).is_ok() {
+                let _ = SetEndOfFile(dest_h);
+                // Seek back to start
+                let _ = SetFilePointerEx(dest_h, 0, None, FILE_BEGIN);
+            }
+        }
 
         // Allocate a 64KB I/O buffer
         let mut buffer = vec![0u8; 64 * 1024];
@@ -335,29 +347,40 @@ pub fn run_engine(
         false
     };
 
-    let small_items = Arc::new(work_list.small_files);
+    // Group small files by destination parent directory to prevent NTFS directory index locks
+    let mut dir_groups: HashMap<PathBuf, Vec<crate::walker::CopyItem>> = HashMap::new();
+    for item in work_list.small_files {
+        if let Some(parent) = item.dest_path.parent() {
+            dir_groups.entry(parent.to_path_buf()).or_default().push(item);
+        }
+    }
+    let dir_works: Vec<Vec<crate::walker::CopyItem>> = dir_groups.into_values().collect();
+    
+    let small_dirs = Arc::new(dir_works);
     let large_items = Arc::new(work_list.large_files);
 
     // If same volume move, execute renaming instantly (single thread is fastest, avoid queuing)
     if is_move && is_same_volume {
-        for item in small_items.iter() {
-            if cancel_flag.load(Ordering::Relaxed) {
-                break;
-            }
-            let src_wide: Vec<u16> = item.src_path.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
-            let dest_wide: Vec<u16> = item.dest_path.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
-            unsafe {
-                let res = MoveFileExW(
-                    PCWSTR(src_wide.as_ptr()),
-                    PCWSTR(dest_wide.as_ptr()),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED,
-                );
-                if res.is_ok() {
-                    global_state.files_completed.fetch_add(1, Ordering::SeqCst);
-                    global_state.bytes_completed.fetch_add(item.size, Ordering::SeqCst);
-                } else {
-                    let err = res.err().map(|e| e.to_string()).unwrap_or_else(|| "Move error".to_string());
-                    global_state.failed_files.lock().unwrap().push((item.src_path.clone(), err));
+        for dir in small_dirs.iter() {
+            for item in dir {
+                if cancel_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+                let src_wide: Vec<u16> = item.src_path.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
+                let dest_wide: Vec<u16> = item.dest_path.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
+                unsafe {
+                    let res = MoveFileExW(
+                        PCWSTR(src_wide.as_ptr()),
+                        PCWSTR(dest_wide.as_ptr()),
+                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED,
+                    );
+                    if res.is_ok() {
+                        global_state.files_completed.fetch_add(1, Ordering::SeqCst);
+                        global_state.bytes_completed.fetch_add(item.size, Ordering::SeqCst);
+                    } else {
+                        let err = res.err().map(|e| e.to_string()).unwrap_or_else(|| "Move error".to_string());
+                        global_state.failed_files.lock().unwrap().push((item.src_path.clone(), err));
+                    }
                 }
             }
         }
@@ -431,11 +454,11 @@ pub fn run_engine(
             }));
         }
 
-        // 2. Small-file pool: Concurrency matching auto-tuned policy, using direct custom copy function
+        // 2. Small-file pool: sharded by directory to prevent NTFS index lock contention
         let mut small_threads = Vec::new();
         for _ in 0..concurrency {
             let idx = small_idx.clone();
-            let items = small_items.clone();
+            let dirs = small_dirs.clone();
             let state = global_state.clone();
             let c_flag = cancel_flag.clone();
 
@@ -445,12 +468,17 @@ pub fn run_engine(
                         break;
                     }
                     let current = idx.fetch_add(1, Ordering::SeqCst);
-                    if current >= items.len() {
+                    if current >= dirs.len() {
                         break;
                     }
-                    let item = &items[current];
-                    if let Err(e) = copy_file_direct(&item.src_path, &item.dest_path, &state) {
-                        state.failed_files.lock().unwrap().push((item.src_path.clone(), e));
+                    let items = &dirs[current];
+                    for item in items {
+                        if c_flag.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        if let Err(e) = copy_file_direct(&item.src_path, &item.dest_path, item.size, &state) {
+                            state.failed_files.lock().unwrap().push((item.src_path.clone(), e));
+                        }
                     }
                 }
             }));
@@ -473,9 +501,11 @@ pub fn run_engine(
 
     if is_move && failures.is_empty() && !was_cancelled {
         // Delete all small and large source files
-        for file in small_items.iter() {
-            if let Err(e) = fs::remove_file(&file.src_path) {
-                failures.push((file.src_path.clone(), format!("Move cleanup failed: {}", e)));
+        for dir in small_dirs.iter() {
+            for file in dir {
+                if let Err(e) = fs::remove_file(&file.src_path) {
+                    failures.push((file.src_path.clone(), format!("Move cleanup failed: {}", e)));
+                }
             }
         }
         for file in large_items.iter() {
