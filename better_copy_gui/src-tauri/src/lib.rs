@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{Manager, Emitter, Listener};
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::TrayIconBuilder;
 
 #[derive(Clone, serde::Serialize)]
 struct StartPayload {
@@ -36,9 +38,34 @@ struct CompletePayload {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }))
     .setup(|app| {
       let app_handle = app.handle().clone();
       let window = app.get_webview_window("main").unwrap();
+      
+      // Setup tray icon menu
+      let quit_item = MenuItemBuilder::new("Quit")
+          .id("quit")
+          .build(app)?;
+
+      let tray_menu = MenuBuilder::new(app)
+          .item(&quit_item)
+          .build()?;
+
+      let _tray = TrayIconBuilder::new()
+          .icon(app.default_window_icon().unwrap().clone())
+          .menu(&tray_menu)
+          .on_menu_event(|app, event| {
+              if event.id() == "quit" {
+                  app.exit(0);
+              }
+          })
+          .build(app)?;
       
       // Create channel for copy jobs
       let (copy_tx, copy_rx) = std::sync::mpsc::channel::<(Vec<PathBuf>, PathBuf, bool)>();

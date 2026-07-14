@@ -40,7 +40,7 @@ use windows::Win32::System::DataExchange::{
 use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
 use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 
-const SID_S_TOP_LEVEL_BROWSER: GUID = GUID::from_u128(0x4c9656d3_448b_11d1_af5a_00aa00b67f57);
+const SID_S_TOP_LEVEL_BROWSER: GUID = GUID::from_u128(0x4C96BE40_915C_11CF_99D3_00AA004AE837);
 const HOTKEY_ID: i32 = 1;
 const MSG_RE_REGISTER: u32 = WM_USER + 1;
 
@@ -236,11 +236,13 @@ fn update_hotkey_registration(hwnd: HWND, force_unregister: bool) {
             let currently_registered = reg.get();
             if eligible && !currently_registered {
                 let res = RegisterHotKey(hwnd, HOTKEY_ID, MOD_CONTROL | MOD_SHIFT, 0x56);
+                println!("[Trigger] Registering hotkey: Result={:?}", res);
                 if res.is_ok() {
                     reg.set(true);
                 }
             } else if !eligible && currently_registered {
-                let _ = UnregisterHotKey(hwnd, HOTKEY_ID);
+                let res = UnregisterHotKey(hwnd, HOTKEY_ID);
+                println!("[Trigger] Unregistering hotkey: Result={:?}", res);
                 reg.set(false);
             }
         });
@@ -358,12 +360,19 @@ unsafe extern "system" fn win_event_proc(
     _dw_event_thread: u32,
     _dwms_event_time: u32,
 ) {
-    WINDOW_HWND.with(|w_hwnd| {
-        let hwnd = w_hwnd.get();
-        if !hwnd.0.is_null() {
-            update_hotkey_registration(hwnd, false);
-        }
-    });
+    unsafe {
+        WINDOW_HWND.with(|w_hwnd| {
+            let hwnd = w_hwnd.get();
+            if !hwnd.0.is_null() {
+                let fg = GetForegroundWindow();
+                let mut class_name = [0u16; 256];
+                let len = GetClassNameW(fg, &mut class_name);
+                let class_str = String::from_utf16_lossy(&class_name[..len as usize]);
+                println!("[Trigger] Focus shifted to window class: {}", class_str);
+                update_hotkey_registration(hwnd, false);
+            }
+        });
+    }
 }
 
 /// Window procedure for the message-only trigger window.
@@ -376,9 +385,11 @@ unsafe extern "system" fn trigger_window_proc(
     unsafe {
         match msg {
             WM_HOTKEY => {
+                println!("[Trigger] WM_HOTKEY message received by window!");
                 if wparam.0 as i32 == HOTKEY_ID {
                     let fg = GetForegroundWindow();
                     if check_rename_box_focus(fg) {
+                        println!("[Trigger] Focus is inside a rename/edit box, replaying native keys.");
                         replay_hotkey(hwnd);
                     } else {
                         if let Some(cb_mutex) = TRIGGER_CALLBACK.get() {

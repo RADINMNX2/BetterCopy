@@ -25,3 +25,7 @@ windows = { version = "0.58", features = [
     "Win32_UI_Accessibility",
 ] }
 
+[[bin]]
+name = "trigger_test"
+path = "src/trigger_test.rs"
+
