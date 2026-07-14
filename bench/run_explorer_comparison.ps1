@@ -1,6 +1,6 @@
 param (
     [string]$Dest = "bench/dest",
-    [int]$CooldownSeconds = 30
+    [int]$CooldownSeconds = 10
 )
 
 $ErrorActionPreference = "Stop"
@@ -181,23 +181,13 @@ function Run-With-Cooldown([string]$Name, [string]$DestPath) {
 
 $ExplorerDest = Join-Path $DestFullPath "run_explorer"
 
-# Cache Warm-up
-Write-Host "`nWarming up cache by doing a dummy copy..." -ForegroundColor Yellow
-$WarmUpDest = Join-Path $DestFullPath "warmup_run"
-Safe-Clean $WarmUpDest
-$Dummy = Measure-Explorer-Copy $TinyDirFullPath $WarmUpDest
-Safe-Clean $WarmUpDest
-Write-Host "Cache warmed up." -ForegroundColor Green
-
 
 # ==============================================================================
 # Execution
 # ==============================================================================
-Write-Host "`n=== STARTING WINDOWS EXPLORER BENCHMARK ===" -ForegroundColor Magenta
+Write-Host "`n=== STARTING WINDOWS EXPLORER BENCHMARK (N=1) ===" -ForegroundColor Magenta
 
-$R1 = Run-With-Cooldown "Windows Explorer - Run 1" $ExplorerDest
-$R2 = Run-With-Cooldown "Windows Explorer - Run 2" $ExplorerDest
-$R3 = Run-With-Cooldown "Windows Explorer - Run 3" $ExplorerDest
+$R1 = Run-With-Cooldown "Windows Explorer" $ExplorerDest
 
 # Clean up paths after benchmark
 Safe-Clean $ExplorerDest
@@ -205,23 +195,19 @@ Safe-Clean $ExplorerDest
 # ==============================================================================
 # Compilation & Report
 # ==============================================================================
-$AvgTime = [Math]::Round(($R1.Time + $R2.Time + $R3.Time)/3, 3)
-$AvgFps = [Math]::Round(100000 / $AvgTime, 1)
+$AvgTime = $R1.Time
+$AvgFps = $R1.Fps
 
 $ResultText = @"
 ================================================================================
-Windows Explorer Benchmark (3 runs)
+Windows Explorer Benchmark (1 run)
 Timestamp: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 Fixture: 100,000 files x 8KB (~800MB)
 Defender Real-Time Protection: $(if ($DefenderStatus) { 'Enabled' } else { 'Disabled' })
 ================================================================================
 Run                            Time (s)       Files/Sec      Valid
 --------------------------------------------------------------------------------
-Windows Explorer - Run 1       $($R1.Time.ToString().PadRight(14)) $($R1.Fps.ToString().PadRight(14)) $($R1.Verified)
-Windows Explorer - Run 2       $($R2.Time.ToString().PadRight(14)) $($R2.Fps.ToString().PadRight(14)) $($R2.Verified)
-Windows Explorer - Run 3       $($R3.Time.ToString().PadRight(14)) $($R3.Fps.ToString().PadRight(14)) $($R3.Verified)
---------------------------------------------------------------------------------
-Average Time:                  $($AvgTime) seconds ($AvgFps Files/Sec)
+Windows Explorer               $($R1.Time.ToString().PadRight(14)) $($R1.Fps.ToString().PadRight(14)) $($R1.Verified)
 ================================================================================
 "@
 

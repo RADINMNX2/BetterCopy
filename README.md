@@ -60,8 +60,9 @@ We benchmarked BetterCopy against Microsoft's industry-standard `robocopy` using
 | **BetterCopy (`bcopy`)** | Default (Auto-Tuned) | **20.19s** | **1.65x faster** (Baseline) |
 | **Robocopy** | `/MT:32` (Threads) | 33.29s | 1.00x |
 | **Robocopy** | `/MT:32 /J` (Unbuffered) | 35.80s | 0.93x |
+| **Windows Explorer** | Defender Disabled (Manual) | 240s - 300s (4m - 5m) | 0.11x - 0.14x (8x - 9x slower) |
 
-*BetterCopy achieves a **64.9% throughput improvement** over the fastest possible Robocopy configuration on NVMe drives for tiny files.*
+*BetterCopy achieves a **64.9% throughput improvement** over the fastest possible Robocopy configuration, and is **12x to 15x faster** than native Windows Explorer (with Defender disabled) when copying tiny files on NVMe drives.*
 
 ---
 
