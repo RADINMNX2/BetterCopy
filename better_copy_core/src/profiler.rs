@@ -12,7 +12,7 @@ const DRIVE_REMOTE: u32 = 4;
 
 // IOCTL and standard Windows storage API constants
 const IOCTL_STORAGE_GET_DEVICE_NUMBER: u32 = 0x002d1080;
-const IOCTL_STORAGE_QUERY_PROPERTY: u32 = 0x002d0c40;
+const IOCTL_STORAGE_QUERY_PROPERTY: u32 = 0x002d1400;
 
 const STORAGE_DEVICE_PROPERTY: i32 = 0;
 const STORAGE_DEVICE_SEEK_PENALTY_PROPERTY: i32 = 7;
@@ -70,8 +70,8 @@ pub enum DeviceClass {
 impl DeviceClass {
     pub fn default_concurrency(&self) -> usize {
         match self {
-            DeviceClass::SsdNvme => 8,
-            DeviceClass::Unknown => 8,
+            DeviceClass::SsdNvme => 16,
+            DeviceClass::Unknown => 16,
             DeviceClass::BotUsb => 2,
             DeviceClass::Hdd => 1,
         }
@@ -370,3 +370,17 @@ pub fn get_disk_free_space(volume_path: &[u16]) -> Option<u64> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_profile_device() {
+        let path = Path::new("C:\\");
+        let profile = profile_device(path);
+        println!("profile: {:?}", profile);
+        assert!(!profile.description.is_empty());
+    }
+}
+
