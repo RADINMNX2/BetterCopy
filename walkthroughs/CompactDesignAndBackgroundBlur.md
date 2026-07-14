@@ -23,7 +23,8 @@ We modified [main.js](file:///c:/Users/kaika/BP/gitprojects/BetterCopy/better_co
 - Shortened copy status labels in JS callbacks (e.g. using `Done` instead of `Successfully completed!` and `Cancelled` instead of `Cancelled by user.`).
 - Programmatically hide the `Cancel` text button on transfer completion to save space.
 - Configured the `<canvas>` speed graph width to `288` inside `index.html` (matching the horizontal content width inside the padded container).
-- Increased the speed history capacity `maxHistory` to `60` in `main.js` to draw a detailed, smooth speed line across the wider canvas in real-time.
+- Transformed the speed graph into a **hybrid progress bar** inside `main.js`: speed data points are plotted at horizontal coordinates mapped directly to the copy progress percentage (`canvas.width * (percent / 100)`). The speed line and gradient fill grow dynamically from left to right as the transfer completes, leaving the undrawn future progress space empty.
+- Set the graph refresh throttling rate to **250ms** in `main.js` to ensure the progress line extends smoothly and responsively across the canvas in real-time.
 
 ### 4. Spacing and Visuals (CSS)
 We modified [style.css](file:///c:/Users/kaika/BP/gitprojects/BetterCopy/better_copy_gui/ui/style.css):

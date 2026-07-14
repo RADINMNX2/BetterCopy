@@ -4,10 +4,11 @@ const { listen, emit } = window.__TAURI__.event;
 const appWindow = getCurrentWindow();
 
 // State for Speed Graph and Thread Animator
-let speedHistory = [];
-const maxHistory = 60;
+let speedHistory = []; // Will store { percent: number, speed: number }
 let copyActive = false;
 let threadInterval = null;
+let lastGraphUpdateTime = 0;
+let currentPercent = 0;
 
 // Helper to get file basename
 function getBasename(path) {
@@ -103,16 +104,19 @@ function stopThreadAnimation() {
   });
 }
 
-// SVG/Canvas Speed Graph Drawer
-function drawSpeedGraph(speed) {
+// SVG/Canvas Speed Graph Drawer (Acts as the progress bar)
+function drawSpeedGraph(percent, speed) {
   const canvas = document.getElementById('speed-canvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   
-  speedHistory.push(speed);
-  if (speedHistory.length > maxHistory) {
-    speedHistory.shift();
+  // Start with 0% data point if history is empty
+  if (speedHistory.length === 0 && percent > 0) {
+    speedHistory.push({ percent: 0, speed: speed });
   }
+  
+  speedHistory.push({ percent: percent, speed: speed });
+  currentPercent = percent;
   
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   
@@ -129,7 +133,7 @@ function drawSpeedGraph(speed) {
   
   if (speedHistory.length < 2) return;
   
-  const maxSpeed = Math.max(...speedHistory, 50.0); // Baseline scale of 50 MB/s
+  const maxSpeed = Math.max(...speedHistory.map(h => h.speed), 50.0); // Baseline scale of 50 MB/s
   
   // Draw gradient area under the line
   const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
@@ -140,11 +144,12 @@ function drawSpeedGraph(speed) {
   ctx.moveTo(0, canvas.height);
   
   for (let i = 0; i < speedHistory.length; i++) {
-    const x = (canvas.width / (maxHistory - 1)) * i;
-    const y = canvas.height - (speedHistory[i] / maxSpeed) * (canvas.height - 4) - 2;
+    const x = canvas.width * (speedHistory[i].percent / 100);
+    const y = canvas.height - (speedHistory[i].speed / maxSpeed) * (canvas.height - 4) - 2;
     ctx.lineTo(x, y);
   }
-  ctx.lineTo((canvas.width / (maxHistory - 1)) * (speedHistory.length - 1), canvas.height);
+  const lastX = canvas.width * (currentPercent / 100);
+  ctx.lineTo(lastX, canvas.height);
   ctx.closePath();
   ctx.fillStyle = gradient;
   ctx.fill();
@@ -152,8 +157,8 @@ function drawSpeedGraph(speed) {
   // Draw line
   ctx.beginPath();
   for (let i = 0; i < speedHistory.length; i++) {
-    const x = (canvas.width / (maxHistory - 1)) * i;
-    const y = canvas.height - (speedHistory[i] / maxSpeed) * (canvas.height - 4) - 2;
+    const x = canvas.width * (speedHistory[i].percent / 100);
+    const y = canvas.height - (speedHistory[i].speed / maxSpeed) * (canvas.height - 4) - 2;
     if (i === 0) {
       ctx.moveTo(x, y);
     } else {
@@ -171,6 +176,8 @@ listen('copy-start', (event) => {
   
   // Reset graph history and clear canvas
   speedHistory = [];
+  currentPercent = 0;
+  lastGraphUpdateTime = 0;
   const canvas = document.getElementById('speed-canvas');
   if (canvas) {
     const ctx = canvas.getContext('2d');
@@ -234,7 +241,11 @@ listen('copy-progress', (event) => {
   document.getElementById('progress-bytes').innerText = `${bytes_mb} MB / ${total_mb} MB`;
   document.getElementById('status-msg').innerText = 'Copying...';
   
-  drawSpeedGraph(speed_mbps);
+  const now = Date.now();
+  if (now - lastGraphUpdateTime >= 250 || speedHistory.length === 0 || percent === 100) {
+    drawSpeedGraph(percent, speed_mbps);
+    lastGraphUpdateTime = now;
+  }
 });
 
 listen('copy-complete', (event) => {
