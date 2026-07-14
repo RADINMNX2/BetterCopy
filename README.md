@@ -10,7 +10,11 @@
 
 ## ✦ The Philosophy
 
-BetterCopy is built around a simple, uncompromising brand promise:
+BetterCopy is designed to have the **largest impact on typical Windows file copy performance with the least effort by the user**. 
+
+It does not compete with feature-heavy power-user tools like TeraCopy or FastCopy, nor does it aim to support complex environments like cloud drives. The goal is to make copying better for the typical user without them ever having to think about it.
+
+It is built around a simple, uncompromising brand promise:
 * **No Admin:** Runs entirely in user space. No elevation prompts, no UAC bypasses.
 * **No Injection:** Zero DLL injection into `explorer.exe` or hooking of `SHFileOperation`.
 * **No Residue:** No background services, tray clutter, or leftover registry junk.
@@ -145,7 +149,7 @@ bcopy.exe move "C:\source\path" "D:\dest\path"
 **A:** BetterCopy uses focus-gating. The hotkey only triggers when Windows Explorer or the Desktop is active. If you are renaming a file or focused in another app, the keypress passes through naturally.
 
 #### Q: Does it support network drives / UNC paths?
-**A:** No, remote/UNC network paths are currently rejected. BetterCopy is optimized for local storage (SATA, NVMe, USB) auto-tuning. Network share support is planned for a future release.
+**A:** Yes. BetterCopy supports network/UNC drives. The engine auto-detects remote drives and safely limits concurrency to a lower thread count (2 threads) to prevent network congestion. (Note: Cloud-sync folders like OneDrive or Google Drive are not officially supported).
 
 ---
 
@@ -170,10 +174,8 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 - [x] **Preflight Safeguards** — Performs space checks, UNC rejection, write probing, and self-copy detection.
 - [x] **Sleep Prevention** — Inhibits system standby during copy using Win32 execution state management.
 - [x] **Job Cancellation** — Safe abort triggers with rollback of partial target files.
-- [ ] **Verify-on-Write** — Integrity hash verification (e.g., xxHash/SHA-256) and checksum manifest generation.
 - [ ] **In-Flight Pause & Resume** — Support pausing and resuming active copy processes.
 - [ ] **Device-Gone Resiliency** — Automatically pause and poll/retry when external drives disconnect.
-- [ ] **ReFS Block Cloning** — Support native fast cloning on ReFS drives.
 - [ ] **UAC Elevation Prompts** — Offer privilege elevation on write permission failures.
 
 ### GUI & User Experience
@@ -187,4 +189,3 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 ### Packaging & Benchmarking
 - [x] **Symmetrical Benchmarking Harness** — PowerShell fixture generator and test harness.
 - [ ] **MSI Installer Package** — Professional installer creation.
-- [ ] **Cross-Platform Ports** — Adapt core parallel copy functionality for macOS and Linux.
