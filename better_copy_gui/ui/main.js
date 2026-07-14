@@ -25,29 +25,40 @@ function formatTime(seconds) {
 }
 
 // Window control bindings
-document.getElementById('close-btn').addEventListener('click', async () => {
-  try {
-    await emit('copy-cancel');
-  } catch (e) {
-    console.error(e);
-  }
+const closeBtn = document.getElementById('close-btn');
+if (closeBtn) {
+  closeBtn.addEventListener('click', async () => {
+    try {
+      await emit('copy-cancel');
+    } catch (e) {
+      console.error(e);
+    }
+    try {
+      await appWindow.hide();
+    } catch (e) {
+      console.error(e);
+    }
+  });
+}
+
+const cancelBtn = document.getElementById('cancel-btn');
+if (cancelBtn) {
+  cancelBtn.addEventListener('click', async () => {
+    try {
+      await emit('copy-cancel');
+    } catch (e) {
+      console.error(e);
+    }
+  });
+}
+
+document.getElementById('error-close-btn').addEventListener('click', async () => {
+  document.getElementById('error-overlay').style.display = 'none';
   try {
     await appWindow.hide();
   } catch (e) {
     console.error(e);
   }
-});
-
-document.getElementById('cancel-btn').addEventListener('click', async () => {
-  try {
-    await emit('copy-cancel');
-  } catch (e) {
-    console.error(e);
-  }
-});
-
-document.getElementById('error-close-btn').addEventListener('click', () => {
-  document.getElementById('error-overlay').style.display = 'none';
 });
 
 // Thread Visualization Animator
@@ -178,7 +189,8 @@ listen('copy-start', (event) => {
   
   const total_mb = (total_bytes / 1048576).toFixed(1);
   document.getElementById('progress-bytes').innerText = `0.0 MB / ${total_mb} MB`;
-  document.getElementById('status-msg').innerText = 'Initializing copy...';
+  document.getElementById('status-msg').innerText = 'Initializing...';
+  document.getElementById('cancel-btn').style.display = 'inline-block';
   
   // Update active transfer rows
   const jobsList = document.getElementById('jobs-list');
@@ -220,7 +232,7 @@ listen('copy-progress', (event) => {
   const bytes_mb = (bytes_completed / 1048576).toFixed(1);
   const total_mb = (total_bytes / 1048576).toFixed(1);
   document.getElementById('progress-bytes').innerText = `${bytes_mb} MB / ${total_mb} MB`;
-  document.getElementById('status-msg').innerText = 'Transferring data...';
+  document.getElementById('status-msg').innerText = 'Copying...';
   
   drawSpeedGraph(speed_mbps);
 });
@@ -240,9 +252,10 @@ listen('copy-complete', (event) => {
       errorList.appendChild(p);
     });
     document.getElementById('error-overlay').style.display = 'flex';
-    document.getElementById('status-msg').innerText = `Finished with ${failures.length} errors`;
+    document.getElementById('status-msg').innerText = `Failed (${failures.length})`;
   } else if (was_cancelled) {
-    document.getElementById('status-msg').innerText = 'Cancelled by user.';
+    document.getElementById('status-msg').innerText = 'Cancelled';
+    document.getElementById('cancel-btn').style.display = 'none';
     setTimeout(async () => {
       try {
         await appWindow.hide();
@@ -251,7 +264,8 @@ listen('copy-complete', (event) => {
       }
     }, 1500);
   } else {
-    document.getElementById('status-msg').innerText = 'Successfully completed!';
+    document.getElementById('status-msg').innerText = 'Done';
+    document.getElementById('cancel-btn').style.display = 'none';
     document.getElementById('progress-percent').innerText = '100%';
     document.getElementById('progress-fill').style.width = '100%';
     setTimeout(async () => {

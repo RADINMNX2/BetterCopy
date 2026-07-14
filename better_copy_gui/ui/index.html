@@ -7,27 +7,12 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="window-container">
-    <!-- Draggable Header -->
-    <header class="window-header" data-tauri-drag-region>
-      <div class="logo-area" data-tauri-drag-region>
-        <span class="icon">⚡</span>
-        <span class="title" data-tauri-drag-region>BetterCopy</span>
-      </div>
-      <button class="close-btn" id="close-btn" title="Cancel & Close">&times;</button>
-    </header>
-
+  <div class="window-container" data-tauri-drag-region>
     <!-- Content Area -->
-    <main class="window-content">
-      <!-- Device Profiler Summary -->
-      <div class="profile-block">
-        <span class="profile-title" id="profile-desc">Profiling storage devices...</span>
-        <span class="profile-sub" id="profile-concurrency">-</span>
-      </div>
-
+    <main class="window-content" data-tauri-drag-region>
       <!-- Overall Progress Dashboard -->
-      <div class="dashboard">
-        <div class="stats-grid">
+      <div class="dashboard" data-tauri-drag-region>
+        <div class="stats-grid" data-tauri-drag-region>
           <div class="stat-card">
             <span class="label">Speed</span>
             <span class="value" id="stat-speed">0.0 MB/s</span>
@@ -42,24 +27,27 @@
           </div>
         </div>
 
-        <!-- Progress Bar -->
-        <div class="progress-container">
+        <!-- Hidden progress elements kept in DOM for compatibility with JS bindings -->
+        <div class="progress-container" style="display: none;">
           <div class="progress-bar-bg">
             <div class="progress-bar-fill" id="progress-fill" style="width: 0%;"></div>
           </div>
-          <div class="progress-meta">
-            <span id="progress-percent">0%</span>
-            <span id="progress-bytes">0 MB / 0 MB</span>
-          </div>
         </div>
 
-        <!-- Thread & Speed Visualization Row -->
-        <div class="visualization-row">
-          <div class="thread-visualizer">
-            <div class="thread-grid" id="thread-grid"></div>
+        <!-- Speed Graph (Replaces the green bar) -->
+        <div class="graph-container" data-tauri-drag-region>
+          <canvas id="speed-canvas" width="288" height="24"></canvas>
+        </div>
+
+        <!-- Progress Metadata & Cancel Button -->
+        <div class="progress-meta" data-tauri-drag-region>
+          <div data-tauri-drag-region style="white-space: nowrap;">
+            <span id="progress-percent">0%</span>
+            <span id="progress-bytes" style="margin-left: 8px;">0 MB / 0 MB</span>
           </div>
-          <div class="graph-container">
-            <canvas id="speed-canvas" width="296" height="24"></canvas>
+          <div style="display: flex; align-items: center; gap: 8px; white-space: nowrap;">
+            <span id="status-msg">Waiting...</span>
+            <button class="mini-cancel-btn" id="cancel-btn">Cancel</button>
           </div>
         </div>
       </div>
@@ -82,12 +70,6 @@
         </div>
       </div>
     </main>
-
-    <!-- Footer Action Buttons -->
-    <footer class="window-footer">
-      <div class="status-msg" id="status-msg">Waiting for transfer to begin...</div>
-      <button class="cancel-btn" id="cancel-btn">Cancel</button>
-    </footer>
   </div>
 
   <script src="main.js"></script>
