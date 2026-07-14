@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BetterCopy</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="window-container">
+    <!-- Draggable Header -->
+    <header class="window-header" data-tauri-drag-region>
+      <div class="logo-area" data-tauri-drag-region>
+        <span class="icon">⚡</span>
+        <span class="title" data-tauri-drag-region>BetterCopy</span>
+      </div>
+      <button class="close-btn" id="close-btn" title="Cancel & Close">&times;</button>
+    </header>
+
+    <!-- Content Area -->
+    <main class="window-content">
+      <!-- Device Profiler Summary -->
+      <div class="profile-block">
+        <div class="profile-title" id="profile-desc">Profiling storage devices...</div>
+        <div class="profile-sub" id="profile-concurrency">-</div>
+      </div>
+
+      <!-- Overall Progress Dashboard -->
+      <div class="dashboard">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <span class="label">Speed</span>
+            <span class="value" id="stat-speed">0.0 MB/s</span>
+          </div>
+          <div class="stat-card">
+            <span class="label">Time Remaining</span>
+            <span class="value" id="stat-eta">Calculating...</span>
+          </div>
+          <div class="stat-card">
+            <span class="label">Files</span>
+            <span class="value" id="stat-files">0 / 0</span>
+          </div>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="progress-container">
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="progress-fill" style="width: 0%;"></div>
+          </div>
+          <div class="progress-meta">
+            <span id="progress-percent">0%</span>
+            <span id="progress-bytes">0 MB / 0 MB</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Active Transfers List -->
+      <div class="jobs-list" id="jobs-list">
+        <div class="job-item empty">No active copy transfers.</div>
+      </div>
+      
+      <!-- Error Summary Overlay (Hidden by default) -->
+      <div class="error-overlay" id="error-overlay" style="display: none;">
+        <div class="error-header">
+          <span>⚠️ Transfer completed with errors</span>
+        </div>
+        <div class="error-content" id="error-list">
+          <!-- Dynamically populated -->
+        </div>
+        <div class="error-actions">
+          <button class="action-btn" id="error-close-btn">Dismiss</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- Footer Action Buttons -->
+    <footer class="window-footer">
+      <div class="status-msg" id="status-msg">Waiting for transfer to begin...</div>
+      <button class="cancel-btn" id="cancel-btn">Cancel</button>
+    </footer>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>

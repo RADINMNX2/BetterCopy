@@ -78,33 +78,33 @@
       "id": "M2",
       "name": "Milestone 2: Trigger",
       "description": "Implement foreground gating, RegisterHotKey, rename-box check, and clipboard/Explorer resolution.",
-      "status": "pending",
+      "status": "in_progress",
       "tasks": [
         {
           "id": "M2-1",
           "name": "Setup Message-Only Win32 Window & Hotkey Registration",
-          "status": "pending",
+          "status": "completed",
           "requires_user": false,
           "description": "Register Ctrl+Shift+V globally but activate only when Explorer/Desktop is focused."
         },
         {
           "id": "M2-2",
           "name": "Implement Foreground Gating & Rename Guard",
-          "status": "pending",
+          "status": "completed",
           "requires_user": false,
           "description": "Use SetWinEventHook for focus shifts. Unregister hotkey or pass-through if focus is in a rename Edit box."
         },
         {
           "id": "M2-3",
           "name": "Resolve Clipboard Source List & Drop Effects",
-          "status": "pending",
+          "status": "completed",
           "requires_user": false,
           "description": "Read CF_HDROP and CFSTR_PREFERREDDROPEFFECT (cut vs copy) from Windows clipboard."
         },
         {
           "id": "M2-4",
           "name": "Resolve Explorer Destination Path",
-          "status": "pending",
+          "status": "completed",
           "requires_user": false,
           "description": "Enumerate shell windows using COM (IShellWindows) to find the path of the active Explorer window."
         },
@@ -121,26 +121,26 @@
       "id": "M3",
       "name": "Milestone 3: Progress UI & Preflight",
       "description": "Integrate Tauri, build custom progress UI, taskbar integration, and preflight checks.",
-      "status": "pending",
+      "status": "in_progress",
       "tasks": [
         {
           "id": "M3-1",
           "name": "Initialize Tauri & Create Progress Window Lifecycle",
-          "status": "pending",
+          "status": "completed",
           "requires_user": false,
           "description": "Create hidden progress window on startup, support native taskbar progress bar states, and control show/hide behavior."
         },
         {
           "id": "M3-2",
           "name": "Implement Preflight Checks",
-          "status": "pending",
+          "status": "completed",
           "requires_user": false,
           "description": "Check free space, reject UNC/network paths, check copy-into-self, and run writability probe."
         },
         {
           "id": "M3-3",
           "name": "Develop Progress UI Dashboard",
-          "status": "pending",
+          "status": "completed",
           "requires_user": false,
           "description": "Build high-aesthetic HTML/CSS page showing aggregated speed, ETA, decision lines, and multiple stacked jobs."
         },

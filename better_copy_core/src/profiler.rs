@@ -352,3 +352,21 @@ pub fn profile_device(path: &Path) -> DeviceProfile {
         description,
     }
 }
+
+/// Helper to get the free disk space of a volume (returns bytes)
+pub fn get_disk_free_space(volume_path: &[u16]) -> Option<u64> {
+    unsafe {
+        let mut free_bytes = 0u64;
+        let res = windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+            PCWSTR(volume_path.as_ptr()),
+            Some(&mut free_bytes),
+            None,
+            None,
+        );
+        if res.is_ok() {
+            Some(free_bytes)
+        } else {
+            None
+        }
+    }
+}

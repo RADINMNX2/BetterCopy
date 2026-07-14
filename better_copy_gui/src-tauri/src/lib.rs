@@ -1,0 +1,276 @@
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering, AtomicU64};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+use tauri::{Manager, Emitter, Listener};
+
+#[derive(Clone, serde::Serialize)]
+struct StartPayload {
+    sources: Vec<String>,
+    destination: String,
+    description: String,
+    concurrency: usize,
+    total_files: usize,
+    total_bytes: u64,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct ProgressPayload {
+    files_completed: usize,
+    bytes_completed: u64,
+    speed_mbps: f64,
+    eta_seconds: f64,
+    total_files: usize,
+    total_bytes: u64,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct CompletePayload {
+    files_copied: usize,
+    bytes_copied: u64,
+    failures: Vec<(String, String)>,
+    was_cancelled: bool,
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+  tauri::Builder::default()
+    .setup(|app| {
+      let app_handle = app.handle().clone();
+      let window = app.get_webview_window("main").unwrap();
+      
+      // Create channel for copy jobs
+      let (copy_tx, copy_rx) = std::sync::mpsc::channel::<(Vec<PathBuf>, PathBuf, bool)>();
+      
+      // Shared cancellation flag
+      let cancel_flag = Arc::new(AtomicBool::new(false));
+      let cancel_flag_clone = cancel_flag.clone();
+      
+      // Listen for cancel event from frontend UI
+      let _id = app_handle.listen("copy-cancel", move |_event| {
+          cancel_flag_clone.store(true, Ordering::SeqCst);
+      });
+      
+      let window_worker = window.clone();
+      let cancel_flag_worker = cancel_flag.clone();
+      
+      // Spawn background worker thread to process copy queue sequential execution
+      thread::spawn(move || {
+          while let Ok((sources, dest, is_move)) = copy_rx.recv() {
+              cancel_flag_worker.store(false, Ordering::SeqCst);
+              
+              // Device profiling
+              let profile = better_copy_core::profiler::profile_device(&dest);
+              let concurrency = profile.concurrency;
+              
+              // Walk tree to build work list
+              let work_list = match better_copy_core::walker::build_work_list(&sources, &dest) {
+                  Ok(wl) => wl,
+                  Err(e) => {
+                      let _ = window_worker.emit("copy-complete", CompletePayload {
+                          files_copied: 0,
+                          bytes_copied: 0,
+                          failures: vec![(dest.display().to_string(), format!("Failed to build work list: {}", e))],
+                          was_cancelled: false,
+                      });
+                      continue;
+                  }
+              };
+              
+              let total_files = work_list.total_files;
+              let total_bytes = work_list.total_bytes;
+              
+              // Start progress window setup
+              let _ = window_worker.emit("copy-start", StartPayload {
+                  sources: sources.iter().map(|p| p.display().to_string()).collect(),
+                  destination: dest.display().to_string(),
+                  description: profile.description.clone(),
+                  concurrency,
+                  total_files,
+                  total_bytes,
+              });
+              
+              let _ = window_worker.show();
+              let _ = window_worker.set_progress_bar(tauri::window::ProgressBarState {
+                  status: Some(tauri::window::ProgressBarStatus::Normal),
+                  progress: Some(0),
+              });
+              
+              // Preflight checks
+              let mut preflight_failed = false;
+              let mut preflight_errors = Vec::new();
+              
+              // 1. Scope check (no remote / UNC paths)
+              let dest_profile = better_copy_core::profiler::profile_device(&dest);
+              if dest_profile.is_remote {
+                  preflight_failed = true;
+                  preflight_errors.push((dest.display().to_string(), "Remote destinations are not supported.".to_string()));
+              }
+              for src in &sources {
+                  let src_profile = better_copy_core::profiler::profile_device(src);
+                  if src_profile.is_remote {
+                      preflight_failed = true;
+                      preflight_errors.push((src.display().to_string(), "Remote sources are not supported.".to_string()));
+                  }
+              }
+              
+              // 2. Copy-into-self check
+              for src in &sources {
+                  if dest.starts_with(src) {
+                      preflight_failed = true;
+                      preflight_errors.push((src.display().to_string(), "Cannot copy a directory inside itself.".to_string()));
+                  }
+              }
+              
+              // 3. Free space check
+              let dest_full = match std::fs::canonicalize(&dest).or_else(|_| std::fs::create_dir_all(&dest).and_then(|_| std::fs::canonicalize(&dest))) {
+                  Ok(path) => path,
+                  Err(_) => dest.clone(),
+              };
+              if let Some(vp) = better_copy_core::profiler::get_volume_path(&dest_full) {
+                  if let Some(free_bytes) = better_copy_core::profiler::get_disk_free_space(&vp) {
+                      if free_bytes < total_bytes {
+                          preflight_failed = true;
+                          preflight_errors.push((dest.display().to_string(), format!("Insufficient disk space. Required: {:.2} GB, Available: {:.2} GB", total_bytes as f64 / 1_073_741_824.0, free_bytes as f64 / 1_073_741_824.0)));
+                      }
+                  }
+              }
+              
+              // 4. Writability probe
+              let time_num = std::time::SystemTime::now()
+                  .duration_since(std::time::UNIX_EPOCH)
+                  .unwrap_or_default()
+                  .as_nanos();
+              let probe_file = dest.join(format!("better_copy_probe_{}.tmp", time_num));
+              if let Err(e) = std::fs::File::create(&probe_file).and_then(|_| std::fs::remove_file(&probe_file)) {
+                  preflight_failed = true;
+                  preflight_errors.push((dest.display().to_string(), format!("Destination is not writable: {}", e)));
+              }
+              
+              if preflight_failed {
+                  let _ = window_worker.set_progress_bar(tauri::window::ProgressBarState {
+                      status: Some(tauri::window::ProgressBarStatus::Error),
+                      progress: Some(100),
+                  });
+                  let _ = window_worker.emit("copy-complete", CompletePayload {
+                      files_copied: 0,
+                      bytes_copied: 0,
+                      failures: preflight_errors,
+                      was_cancelled: false,
+                  });
+                  continue;
+              }
+              
+              // Run copy engine
+              let window_progress = window_worker.clone();
+              let start_time = Instant::now();
+              let last_update = Mutex::new(Instant::now());
+              let last_bytes = AtomicU64::new(0);
+              
+              let progress_cb = Box::new(move |completed_files, completed_bytes| {
+                  let now = Instant::now();
+                  let mut last_up = last_update.lock().unwrap();
+                  let elapsed_since_update = now.duration_since(*last_up);
+                  
+                  if elapsed_since_update >= Duration::from_millis(250) {
+                      let total_elapsed = now.duration_since(start_time);
+                      let prev_bytes = last_bytes.load(Ordering::Relaxed);
+                      let delta_bytes = completed_bytes - prev_bytes;
+                      
+                      let speed = if elapsed_since_update.as_secs_f64() > 0.0 {
+                          (delta_bytes as f64 / 1_048_576.0) / elapsed_since_update.as_secs_f64()
+                      } else {
+                          0.0
+                      };
+                      
+                      let avg_speed = if total_elapsed.as_secs_f64() > 0.0 {
+                          completed_bytes as f64 / total_elapsed.as_secs_f64()
+                      } else {
+                          0.0
+                      };
+                      
+                      let remaining_bytes = if total_bytes > completed_bytes {
+                          total_bytes - completed_bytes
+                      } else {
+                          0
+                      };
+                      
+                      let eta = if avg_speed > 0.0 {
+                          remaining_bytes as f64 / avg_speed
+                      } else {
+                          -1.0
+                      };
+                      
+                      *last_up = now;
+                      last_bytes.store(completed_bytes, Ordering::Relaxed);
+                      
+                      let percent = if total_bytes > 0 {
+                          ((completed_bytes as f64 / total_bytes as f64) * 100.0) as u64
+                      } else {
+                          0
+                      };
+                      
+                      let _ = window_progress.set_progress_bar(tauri::window::ProgressBarState {
+                          status: Some(tauri::window::ProgressBarStatus::Normal),
+                          progress: Some(percent),
+                      });
+                      
+                      let _ = window_progress.emit("copy-progress", ProgressPayload {
+                          files_completed: completed_files,
+                          bytes_completed: completed_bytes,
+                          speed_mbps: speed,
+                          eta_seconds: eta,
+                          total_files,
+                          total_bytes,
+                      });
+                  }
+              });
+              
+              let summary = better_copy_core::engine::run_engine(
+                  &sources,
+                  &dest,
+                  is_move,
+                  None,
+                  cancel_flag_worker.clone(),
+                  Some(progress_cb),
+              );
+              
+              let has_failures = !summary.failures.is_empty();
+              let was_cancelled = summary.was_cancelled;
+              
+              let final_status = if was_cancelled {
+                  tauri::window::ProgressBarStatus::None
+              } else if has_failures {
+                  tauri::window::ProgressBarStatus::Error
+              } else {
+                  tauri::window::ProgressBarStatus::None
+              };
+              
+              let _ = window_worker.set_progress_bar(tauri::window::ProgressBarState {
+                  status: Some(final_status),
+                  progress: Some(100),
+              });
+              
+              let _ = window_worker.emit("copy-complete", CompletePayload {
+                  files_copied: summary.files_copied,
+                  bytes_copied: summary.bytes_copied,
+                  failures: summary.failures.iter().map(|(p, e)| (p.display().to_string(), e.clone())).collect(),
+                  was_cancelled,
+              });
+          }
+      });
+      
+      // Start the global hotkey focus-gated trigger loop
+      let trigger = better_copy_core::trigger::HotkeyTrigger::start(move |clipboard, dest| {
+          let _ = copy_tx.send((clipboard.paths, dest, clipboard.is_move));
+      }).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to start hotkey trigger: {}", e)))?;
+      
+      // Manage trigger handle lifecycle
+      app.manage(trigger);
+      
+      Ok(())
+    })
+    .run(tauri::generate_context!())
+    .expect("error while running tauri application");
+}
