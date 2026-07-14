@@ -24,4 +24,5 @@ log = "0.4"
 tauri = { version = "2.11.3", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-single-instance = "2"
+window-vibrancy = "0.5"
 better_copy_core = { path = "../../better_copy_core" }

@@ -48,6 +48,13 @@ pub fn run() {
       let app_handle = app.handle().clone();
       let window = app.get_webview_window("main").unwrap();
       
+      #[cfg(target_os = "windows")]
+      {
+          if window_vibrancy::apply_mica(&window, None).is_err() {
+              let _ = window_vibrancy::apply_blur(&window, Some((15, 17, 23, 120)));
+          }
+      }
+      
       // Setup tray icon menu
       let quit_item = MenuItemBuilder::new("Quit")
           .id("quit")

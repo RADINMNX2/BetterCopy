@@ -21,8 +21,8 @@
     <main class="window-content">
       <!-- Device Profiler Summary -->
       <div class="profile-block">
-        <div class="profile-title" id="profile-desc">Profiling storage devices...</div>
-        <div class="profile-sub" id="profile-concurrency">-</div>
+        <span class="profile-title" id="profile-desc">Profiling storage devices...</span>
+        <span class="profile-sub" id="profile-concurrency">-</span>
       </div>
 
       <!-- Overall Progress Dashboard -->
@@ -33,7 +33,7 @@
             <span class="value" id="stat-speed">0.0 MB/s</span>
           </div>
           <div class="stat-card">
-            <span class="label">Time Remaining</span>
+            <span class="label">Remaining</span>
             <span class="value" id="stat-eta">Calculating...</span>
           </div>
           <div class="stat-card">
@@ -52,10 +52,20 @@
             <span id="progress-bytes">0 MB / 0 MB</span>
           </div>
         </div>
+
+        <!-- Thread & Speed Visualization Row -->
+        <div class="visualization-row">
+          <div class="thread-visualizer">
+            <div class="thread-grid" id="thread-grid"></div>
+          </div>
+          <div class="graph-container">
+            <canvas id="speed-canvas" width="140" height="24"></canvas>
+          </div>
+        </div>
       </div>
 
-      <!-- Active Transfers List -->
-      <div class="jobs-list" id="jobs-list">
+      <!-- Active Transfers List (Hidden via CSS) -->
+      <div class="jobs-list" id="jobs-list" style="display: none;">
         <div class="job-item empty">No active copy transfers.</div>
       </div>
       
