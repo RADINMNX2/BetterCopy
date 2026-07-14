@@ -9,6 +9,8 @@ const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
 pub struct CopyItem {
     pub src_path: PathBuf,
     pub dest_path: PathBuf,
+    pub src_wide: Vec<u16>,
+    pub dest_wide: Vec<u16>,
     pub size: u64,
     pub is_dir: bool,
 }
@@ -50,6 +52,11 @@ pub fn ensure_long_path(path: &Path) -> PathBuf {
     }
 }
 
+/// Helper to encode a path into wide string format including the null-terminator.
+fn encode_wide_path(path: &Path) -> Vec<u16> {
+    path.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect()
+}
+
 /// Recursively traverses a directory.
 fn walk_dir(
     src_dir: &Path,
@@ -70,10 +77,15 @@ fn walk_dir(
             continue;
         }
 
+        let src_wide = encode_wide_path(&src_path);
+        let dest_wide = encode_wide_path(&dest_path);
+
         if metadata.is_dir() {
             work_list.dirs.push(CopyItem {
                 src_path: src_path.clone(),
                 dest_path: dest_path.clone(),
+                src_wide,
+                dest_wide,
                 size: 0,
                 is_dir: true,
             });
@@ -83,6 +95,8 @@ fn walk_dir(
             let item = CopyItem {
                 src_path,
                 dest_path,
+                src_wide,
+                dest_wide,
                 size,
                 is_dir: false,
             };
@@ -119,11 +133,16 @@ pub fn build_work_list(sources: &[PathBuf], dest_root: &Path) -> std::io::Result
             None => continue, // Skip root drive paths like C:\ which don't have a filename component
         };
         let target_dest = dest_root_long.join(file_name);
+        
+        let src_wide = encode_wide_path(&src_long);
+        let dest_wide = encode_wide_path(&target_dest);
 
         if metadata.is_dir() {
             work_list.dirs.push(CopyItem {
                 src_path: src_long.clone(),
                 dest_path: target_dest.clone(),
+                src_wide,
+                dest_wide,
                 size: 0,
                 is_dir: true,
             });
@@ -133,6 +152,8 @@ pub fn build_work_list(sources: &[PathBuf], dest_root: &Path) -> std::io::Result
             let item = CopyItem {
                 src_path: src_long,
                 dest_path: target_dest,
+                src_wide,
+                dest_wide,
                 size,
                 is_dir: false,
             };

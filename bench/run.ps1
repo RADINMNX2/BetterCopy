@@ -92,7 +92,7 @@ function Run-Bench([string]$ToolName, [scriptblock]$RunCmd, [string]$RunDest) {
 # Run bcopy
 $BcopyDest = Join-Path $DestFullPath "bcopy_run"
 $BcopyMedian = Run-Bench "bcopy" {
-    Start-Process -FilePath $BcopyPath -ArgumentList $FixtureDir, $BcopyDest -Wait -NoNewWindow
+    Start-Process -FilePath $BcopyPath -ArgumentList $FixtureDir, $BcopyDest, "-t", "12" -Wait -NoNewWindow
 } $BcopyDest
 
 # Robocopy (Reference baseline from first run, skipped here to optimize speed)

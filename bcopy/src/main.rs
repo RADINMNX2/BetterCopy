@@ -49,36 +49,40 @@ fn main() {
     }
     
     let mut is_move = false;
-    let mut sources = Vec::new();
-    let mut dest = String::new();
+    let mut custom_concurrency = None;
+    let mut positionals = Vec::new();
     
-    // Parse arguments.
     let mut i = 1;
     while i < args.len() {
         if args[i] == "--move" || args[i] == "-m" {
             is_move = true;
-        } else {
-            if i == args.len() - 1 {
-                dest = args[i].clone();
-            } else {
-                sources.push(PathBuf::from(&args[i]));
+        } else if (args[i] == "--threads" || args[i] == "-t") && i + 1 < args.len() {
+            if let Ok(n) = args[i + 1].parse::<usize>() {
+                custom_concurrency = Some(n);
             }
+            i += 1;
+        } else {
+            positionals.push(args[i].clone());
         }
         i += 1;
     }
     
-    if sources.is_empty() || dest.is_empty() {
+    if positionals.len() < 2 {
         eprintln!("Error: Missing source paths or destination path.");
-        eprintln!("Usage: bcopy [--move] <sources...> <destination>");
+        eprintln!("Usage: bcopy [--move] [--threads N] <sources...> <destination>");
         std::process::exit(1);
     }
     
+    let dest = positionals.pop().unwrap();
+    let sources: Vec<PathBuf> = positionals.into_iter().map(PathBuf::from).collect();
     let dest_path = PathBuf::from(dest);
     
     let profile = better_copy_core::profiler::profile_device(&dest_path);
+    let concurrency_used = custom_concurrency.unwrap_or(profile.concurrency);
+    
     println!("Starting BetterCopy Engine...");
     println!("Sources: {:?}", sources);
-    println!("Destination: {} (Profile: {}, Concurrency: {} threads)", dest_path.display(), profile.description, profile.concurrency);
+    println!("Destination: {} (Profile: {}, Concurrency: {} threads)", dest_path.display(), profile.description, concurrency_used);
     println!("Operation: {}", if is_move { "Move (Cut)" } else { "Copy" });
     
     let cancel_flag = Arc::new(AtomicBool::new(false));
@@ -96,6 +100,7 @@ fn main() {
         &sources,
         &dest_path,
         is_move,
+        custom_concurrency,
         cancel_flag,
         None,
     );

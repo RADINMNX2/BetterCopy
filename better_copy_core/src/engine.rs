@@ -69,16 +69,14 @@ unsafe extern "system" fn copy_progress_routine(
 }
 
 /// Direct low-overhead file copy function implementing "One handle, all operations" rule
-/// to bypass high API setup overhead of CopyFileExW for tiny files, with size pre-allocation.
+/// with size pre-allocation and pre-allocated path and buffer slices to eliminate heap allocation overhead.
 fn copy_file_direct(
-    src: &Path,
-    dest: &Path,
+    src_wide: &[u16],
+    dest_wide: &[u16],
+    buffer: &mut [u8],
     size: u64,
     global_state: &ProgressState,
 ) -> Result<(), String> {
-    let src_wide: Vec<u16> = src.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
-    let dest_wide: Vec<u16> = dest.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
-
     unsafe {
         // Open source file: read-only, sequential access
         let src_handle = CreateFileW(
@@ -122,21 +120,18 @@ fn copy_file_direct(
             }
         }
 
-        // Allocate a 64KB I/O buffer
-        let mut buffer = vec![0u8; 64 * 1024];
-
         loop {
             if global_state.cancel_flag.load(Ordering::Relaxed) {
                 let _ = CloseHandle(src_h);
                 let _ = CloseHandle(dest_h);
-                let _ = fs::remove_file(dest);
+                let _ = windows::Win32::Storage::FileSystem::DeleteFileW(PCWSTR(dest_wide.as_ptr()));
                 return Err("Cancelled".to_string());
             }
 
             let mut bytes_read = 0u32;
             let read_res = ReadFile(
                 src_h,
-                Some(&mut buffer),
+                Some(buffer),
                 Some(&mut bytes_read as *mut u32),
                 None,
             );
@@ -156,7 +151,7 @@ fn copy_file_direct(
             if write_res.is_err() || bytes_written != bytes_read {
                 let _ = CloseHandle(src_h);
                 let _ = CloseHandle(dest_h);
-                let _ = fs::remove_file(dest);
+                let _ = windows::Win32::Storage::FileSystem::DeleteFileW(PCWSTR(dest_wide.as_ptr()));
                 return Err("Write failed".to_string());
             }
 
@@ -263,6 +258,7 @@ pub fn run_engine(
     sources: &[PathBuf],
     dest: &Path,
     is_move: bool,
+    custom_concurrency: Option<usize>,
     cancel_flag: Arc<AtomicBool>,
     progress_callback: Option<Box<dyn Fn(usize, u64) + Send + Sync>>,
 ) -> EngineSummary {
@@ -274,7 +270,7 @@ pub fn run_engine(
     }
 
     let profile = profile_device(dest);
-    let concurrency = profile.concurrency;
+    let concurrency = custom_concurrency.unwrap_or(profile.concurrency);
 
     // Build the flat work list
     let work_list = match build_work_list(sources, dest) {
@@ -463,6 +459,7 @@ pub fn run_engine(
             let c_flag = cancel_flag.clone();
 
             small_threads.push(thread::spawn(move || {
+                let mut buffer = vec![0u8; 64 * 1024];
                 loop {
                     if c_flag.load(Ordering::Relaxed) {
                         break;
@@ -476,7 +473,7 @@ pub fn run_engine(
                         if c_flag.load(Ordering::Relaxed) {
                             break;
                         }
-                        if let Err(e) = copy_file_direct(&item.src_path, &item.dest_path, item.size, &state) {
+                        if let Err(e) = copy_file_direct(&item.src_wide, &item.dest_wide, &mut buffer, item.size, &state) {
                             state.failed_files.lock().unwrap().push((item.src_path.clone(), e));
                         }
                     }
