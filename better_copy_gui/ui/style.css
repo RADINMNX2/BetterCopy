@@ -106,9 +106,9 @@ body {
 
 /* Stats Cards Grid */
 .stats-grid {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid rgba(255, 255, 255, 0.04);
   border-radius: 6px;
@@ -121,8 +121,20 @@ body {
   padding: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: 0;
+  white-space: nowrap;
+}
+
+.stat-card.speed {
+  align-items: flex-start;
+}
+
+.stat-card.remaining {
+  align-items: center;
+}
+
+.stat-card.files {
+  align-items: flex-end;
 }
  
 .stat-card:hover {
@@ -142,6 +154,8 @@ body {
   font-size: 11px;
   font-weight: 600;
   color: #f3f4f6;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* Progress Section */
@@ -188,6 +202,11 @@ body {
 #progress-percent {
   color: #34d399;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+#progress-bytes {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Active Jobs List */

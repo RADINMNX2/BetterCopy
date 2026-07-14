@@ -11,7 +11,7 @@ We modified [Cargo.toml](file:///c:/Users/kaika/BP/gitprojects/BetterCopy/better
 
 ### 2. Tauri Configuration and Centering
 We modified [tauri.conf.json](file:///c:/Users/kaika/BP/gitprojects/BetterCopy/better_copy_gui/src-tauri/tauri.conf.json) and [lib.rs](file:///c:/Users/kaika/BP/gitprojects/BetterCopy/better_copy_gui/src-tauri/src/lib.rs):
-- Set window dimensions to `320` width and `115` height to give the layout vertical breathing room.
+- Set window dimensions to `320` width and `125` height to give the layout vertical breathing room and prevent clipping of the bottom progress metadata.
 - Configured `"center": true` in `tauri.conf.json` to center the window on initial launch.
 - Added programmatic calls to `window.center()` in `lib.rs` right before showing the window (during copy queue start and single-instance relaunch events), ensuring the window centers dynamically each time it is shown.
 - Maintained `"transparent": true` to allow background transparency and DWM blur to show through.
@@ -39,7 +39,9 @@ We modified [style.css](file:///c:/Users/kaika/BP/gitprojects/BetterCopy/better_
 - Reduced container background opacity to `0.65` for transparency.
 - Adjusted `.window-container` `border-radius` from `16px` to `8px` to match Windows 11 default borderless corner rounding, eliminating outer slivers.
 - Hid the bulky list of files (`.jobs-list { display: none; }`).
-- Collapsed the stats card grid into a single horizontal row of inline columns (`.stats-grid` / `.stat-card`).
+- Collapsed the stats card grid into a single horizontal row of columns using a 3-column CSS Grid (`grid-template-columns: repeat(3, 1fr)`) with explicit horizontal alignments: left for speed, center for remaining, and right for files. This locks the columns to fixed boundaries.
+- Applied `font-variant-numeric: tabular-nums` to `.stat-card .value`, `#progress-percent`, and `#progress-bytes` to render all digit characters with uniform, tabular width. This completely eliminates layout "jiggling" and text jitter as the values update in real-time.
+- Set `white-space: nowrap` on `.stat-card` and `.stat-card .value` elements to completely prevent line-wrapping of labels and values (e.g. file counts).
 - Increased `.window-content` horizontal padding to `16px`, top padding to `16px`, bottom padding to `12px`, and gap size to `10px` to give the layout room to breathe.
 - Added a `.dashboard` flex flow layout with a `10px` gap to separate elements inside the widget.
 
