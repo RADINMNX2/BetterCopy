@@ -21,12 +21,27 @@ BetterCopy is built around a simple, uncompromising brand promise:
 
 ---
 
+## ✦ Product Positioning
+
+BetterCopy occupies a unique sweet spot in the file-transfer ecosystem, bridging the gap between raw command-line performance and seamless native consumer usability:
+
+| Dimension | Standard Windows Copy | CLI Tools (Robocopy / Rsync) | Shell Replacements (TeraCopy / FastCopy) | BetterCopy ⚡ |
+| :--- | :--- | :--- | :--- | :--- |
+| **Speed (Tiny Files)** | 🐌 Slow (Sequential I/O) | ⚡ Fast (Parallelized) | ⚡ Fast (Parallelized) | ⚡ **Fast (Parallelized)** |
+| **Interface** | Native & Seamless | CLI Only (Shell/Scripts) | Heavy custom GUI / Overlay | **Transient Dashboard (Auto-dismisses)** |
+| **Trigger** | `Ctrl+V` | Manual command invocation | Overrides standard copy handlers | **`Ctrl+Shift+V` (Focus-gated)** |
+| **System Residue** | None (Built-in) | None | System services & registry hooks | **None (No admin required, zero residue)** |
+| **Security Footprint** | None | None | DLL Injection / Shell Hooks (Trips AV) | **None (Safe native Win32 & COM APIs)** |
+| **Configuration** | Zero Config | Complex flags (`/MT`, `/J`, `/E`) | Manual buffer & cache size tuning | **Zero Config (IOCTL-based Auto-Tuning)** |
+
+---
+
 ## ✦ How It Works
 
 Windows Explorer copies files sequentially, one-by-one. Third-party tools either require you to use their own clunky file manager or inject dangerous hooks into the Windows shell. BetterCopy offers a third way:
 
 1. **Focus-Gated Trigger:** A lightweight message-only Win32 window registers a global hotkey (`Ctrl+Shift+V`). 
-2. **Context Gating:** It hooks shell events to ensure the hotkey is only active when Windows Explorer (`CabinetWClass`) or the Desktop is in the foreground. If you are renaming a file or focused in another application, the keystroke passes through naturally.
+2. **Context Gating:** It listens to native Windows focus events (`SetWinEventHook`) to ensure the hotkey is only active when Windows Explorer (`CabinetWClass`) or the Desktop is in the foreground. If you are renaming a file or focused in another application, the keystroke passes through naturally.
 3. **COM Destination Resolution:** When triggered, it queries the active Explorer window via COM APIs (`IShellWindows` ➔ `IFolderView2`) to find exactly where your cursor is focused, reads the source files from your clipboard (`CF_HDROP`), and starts copying.
 4. **Auto-Tuning Engine:** It queries physical storage geometries using Win32 storage IOCTLs:
    * **NVMe SSDs:** Automatically ramps up thread concurrency (16 threads by default) to maximize queue depth.
@@ -38,7 +53,7 @@ Windows Explorer copies files sequentially, one-by-one. Third-party tools either
 
 ## ✦ Performance (Sandwich Benchmarks)
 
-We benchmarked BetterCopy against Microsoft's industry-standard `robocopy` using a symmetrical sandwich test structure (exposing SSD write-amplification noise and clearing file-caching drift) with a **10,000 tiny-file fixture (800MB total)**.
+We benchmarked BetterCopy against Microsoft's industry-standard `robocopy` using a symmetrical sandwich test structure (exposing SSD write-amplification noise and clearing file-caching drift) with a **100,000 tiny-file fixture (800MB total)**.
 
 | Copy Engine | Commands / Options | Average Time (s) | Speedup vs. Best Robocopy |
 | :--- | :--- | :--- | :--- |
