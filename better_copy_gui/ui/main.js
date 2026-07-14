@@ -5,7 +5,7 @@ const appWindow = getCurrentWindow();
 
 // State for Speed Graph and Thread Animator
 let speedHistory = [];
-const maxHistory = 40;
+const maxHistory = 60;
 let copyActive = false;
 let threadInterval = null;
 
