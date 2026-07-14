@@ -40,6 +40,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
         if let Some(window) = app.get_webview_window("main") {
+            let _ = window.center();
             let _ = window.show();
             let _ = window.set_focus();
         }
@@ -131,6 +132,7 @@ pub fn run() {
                   total_bytes,
               });
               
+              let _ = window_worker.center();
               let _ = window_worker.show();
               let _ = window_worker.set_progress_bar(tauri::window::ProgressBarState {
                   status: Some(tauri::window::ProgressBarStatus::Normal),

@@ -9,9 +9,11 @@ We modified [Cargo.toml](file:///c:/Users/kaika/BP/gitprojects/BetterCopy/better
 - Added `window-vibrancy = "0.5"` to the cargo dependencies.
 - Added target-gated logic to first attempt `window_vibrancy::apply_mica(&window, None)` (the most performant, zero-lag backdrop sampling effect on Windows 11), falling back to `window_vibrancy::apply_blur(&window, Some((15, 17, 23, 120)))` on Windows 10 or older environments.
 
-### 2. Tauri Configuration
-We modified [tauri.conf.json](file:///c:/Users/kaika/BP/gitprojects/BetterCopy/better_copy_gui/src-tauri/tauri.conf.json):
-- Reduced window size to a mini-widget layout of `320` width and `170` height (approx. 50% scale-down in area).
+### 2. Tauri Configuration and Centering
+We modified [tauri.conf.json](file:///c:/Users/kaika/BP/gitprojects/BetterCopy/better_copy_gui/src-tauri/tauri.conf.json) and [lib.rs](file:///c:/Users/kaika/BP/gitprojects/BetterCopy/better_copy_gui/src-tauri/src/lib.rs):
+- Adjusted window dimensions to `320` width and `180` height to give enough space for the visualizers.
+- Configured `"center": true` in `tauri.conf.json` to center the window on initial launch.
+- Added programmatic calls to `window.center()` in `lib.rs` right before showing the window (during copy queue start and single-instance relaunch events), ensuring the window centers dynamically each time it is shown.
 - Maintained `"transparent": true` to allow background transparency and DWM blur to show through.
 
 ### 3. Drag Target Fix
