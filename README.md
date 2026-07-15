@@ -138,7 +138,7 @@ bcopy.exe move "C:\source\path" "D:\dest\path"
 
 ### Prerequisites
 * [Rust](https://www.rust-lang.org/) (Stable channel)
-* Windows SDK (for Win32 COM and storage APIs)
+* [C++ Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/) (which installs the MSVC compiler and Windows SDK automatically)
 
 ### Step-by-Step Build
 
