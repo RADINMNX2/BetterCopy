@@ -1,6 +1,8 @@
 use std::fs;
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 // Win32 file attribute for reparse point (junctions/symlinks)
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
@@ -65,8 +67,19 @@ fn walk_dir(
     src_dir: &Path,
     dest_dir: &Path,
     work_list: &mut WorkList,
+    cancel_flag: Option<&Arc<AtomicBool>>,
 ) -> std::io::Result<()> {
+    if let Some(cancel) = cancel_flag {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Operation cancelled"));
+        }
+    }
     for entry in fs::read_dir(src_dir)? {
+        if let Some(cancel) = cancel_flag {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Operation cancelled"));
+            }
+        }
         let entry = entry?;
         let src_path = ensure_long_path(&entry.path());
         let file_name = entry.file_name();
@@ -99,7 +112,7 @@ fn walk_dir(
                 last_access_time,
                 last_write_time,
             });
-            walk_dir(&src_path, &dest_path, work_list)?;
+            walk_dir(&src_path, &dest_path, work_list, cancel_flag)?;
         } else {
             let size = metadata.len();
             let item = CopyItem {
@@ -127,11 +140,20 @@ fn walk_dir(
 }
 
 /// Builds the flat work list of directories and files partitioned into queues.
-pub fn build_work_list(sources: &[PathBuf], dest_root: &Path) -> std::io::Result<WorkList> {
+pub fn build_work_list(
+    sources: &[PathBuf],
+    dest_root: &Path,
+    cancel_flag: Option<&Arc<AtomicBool>>,
+) -> std::io::Result<WorkList> {
     let mut work_list = WorkList::default();
     let dest_root_long = ensure_long_path(dest_root);
 
     for source in sources {
+        if let Some(cancel) = cancel_flag {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Operation cancelled"));
+            }
+        }
         let src_long = ensure_long_path(source);
         let metadata = fs::symlink_metadata(&src_long)?;
         let file_attr = metadata.file_attributes();
@@ -166,7 +188,7 @@ pub fn build_work_list(sources: &[PathBuf], dest_root: &Path) -> std::io::Result
                 last_access_time,
                 last_write_time,
             });
-            walk_dir(&src_long, &target_dest, &mut work_list)?;
+            walk_dir(&src_long, &target_dest, &mut work_list, cancel_flag)?;
         } else {
             let size = metadata.len();
             let item = CopyItem {
@@ -201,8 +223,22 @@ pub struct DeleteList {
 }
 
 /// Recursively traverses directory for building a deletion list.
-fn walk_dir_for_delete(dir: &Path, delete_list: &mut DeleteList) -> std::io::Result<()> {
+fn walk_dir_for_delete(
+    dir: &Path,
+    delete_list: &mut DeleteList,
+    cancel_flag: Option<&Arc<AtomicBool>>,
+) -> std::io::Result<()> {
+    if let Some(cancel) = cancel_flag {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Operation cancelled"));
+        }
+    }
     for entry in fs::read_dir(dir)? {
+        if let Some(cancel) = cancel_flag {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Operation cancelled"));
+            }
+        }
         let entry = entry?;
         let path = ensure_long_path(&entry.path());
         let metadata = fs::symlink_metadata(&path)?;
@@ -216,7 +252,7 @@ fn walk_dir_for_delete(dir: &Path, delete_list: &mut DeleteList) -> std::io::Res
 
         if metadata.is_dir() {
             delete_list.dirs.push(path.clone());
-            walk_dir_for_delete(&path, delete_list)?;
+            walk_dir_for_delete(&path, delete_list, cancel_flag)?;
         } else {
             delete_list.files.push(path);
         }
@@ -225,10 +261,18 @@ fn walk_dir_for_delete(dir: &Path, delete_list: &mut DeleteList) -> std::io::Res
 }
 
 /// Builds the flat delete list of directories and files.
-pub fn build_delete_list(sources: &[PathBuf]) -> std::io::Result<DeleteList> {
+pub fn build_delete_list(
+    sources: &[PathBuf],
+    cancel_flag: Option<&Arc<AtomicBool>>,
+) -> std::io::Result<DeleteList> {
     let mut delete_list = DeleteList::default();
 
     for source in sources {
+        if let Some(cancel) = cancel_flag {
+            if cancel.load(Ordering::SeqCst) {
+                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "Operation cancelled"));
+            }
+        }
         let src_long = ensure_long_path(source);
         let metadata = fs::symlink_metadata(&src_long)?;
         let file_attr = metadata.file_attributes();
@@ -240,7 +284,7 @@ pub fn build_delete_list(sources: &[PathBuf]) -> std::io::Result<DeleteList> {
 
         if metadata.is_dir() {
             delete_list.dirs.push(src_long.clone());
-            walk_dir_for_delete(&src_long, &mut delete_list)?;
+            walk_dir_for_delete(&src_long, &mut delete_list, cancel_flag)?;
         } else {
             delete_list.files.push(src_long);
         }

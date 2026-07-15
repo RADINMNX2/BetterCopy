@@ -159,7 +159,7 @@ bcopy.exe move "C:\source\path" "D:\dest\path"
 ## ✦ FAQ
 
 #### Q: Why does the dashboard show a spinner before the copy starts?
-**A:** BetterCopy does a fast, upfront directory traversal and pre-flight checks (disk space, permissions, and folder loops) before copying. This ensures it doesn't fail mid-operation and helps classify files into optimal small/large queues. The actual transfer starts shortly after and is so fast that the total end-to-end time is still much shorter.
+**A:** BetterCopy opens the progress window immediately upon hotkey press to provide instant visual feedback. Before copying or deleting starts, the engine performs a fast background directory traversal and pre-flight checks (disk space, permissions, and folder loops) to ensure it doesn't fail mid-operation and to classify files into optimal small/large queues.
 
 #### Q: Why does `Ctrl+Shift+V` sometimes not do anything?
 **A:** BetterCopy uses focus-gating. The hotkey only triggers when Windows Explorer or the Desktop is active. If you are renaming a file or focused in another app, the keypress passes through naturally.

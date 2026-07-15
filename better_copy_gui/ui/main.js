@@ -79,27 +79,31 @@ function startThreadAnimation(concurrency) {
   if (threadInterval) clearInterval(threadInterval);
   
   const threadGrid = document.getElementById('thread-grid');
-  threadGrid.innerHTML = '';
-  for (let i = 0; i < concurrency; i++) {
-    const dot = document.createElement('div');
-    dot.className = 'thread-dot';
-    threadGrid.appendChild(dot);
+  if (threadGrid) {
+    threadGrid.innerHTML = '';
+    for (let i = 0; i < concurrency; i++) {
+      const dot = document.createElement('div');
+      dot.className = 'thread-dot';
+      threadGrid.appendChild(dot);
+    }
   }
 
   copyActive = true;
   threadInterval = setInterval(() => {
     if (!copyActive) return;
     const dots = document.querySelectorAll('.thread-dot');
-    dots.forEach((dot) => {
-      // Simulate thread active state
-      if (Math.random() > 0.35) {
-        dot.classList.add('active');
-        dot.style.opacity = Math.random() > 0.5 ? '1.0' : '0.7';
-      } else {
-        dot.classList.remove('active');
-        dot.style.opacity = '0.2';
-      }
-    });
+    if (dots && dots.length > 0) {
+      dots.forEach((dot) => {
+        // Simulate thread active state
+        if (Math.random() > 0.35) {
+          dot.classList.add('active');
+          dot.style.opacity = Math.random() > 0.5 ? '1.0' : '0.7';
+        } else {
+          dot.classList.remove('active');
+          dot.style.opacity = '0.2';
+        }
+      });
+    }
   }, 100);
 }
 
@@ -221,8 +225,14 @@ listen('copy-start', (event) => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
   
-  document.getElementById('profile-desc').innerText = description || (isDelete ? "Deleting files..." : "Copying files...");
-  document.getElementById('profile-concurrency').innerText = `${concurrency} threads`;
+  const profileDesc = document.getElementById('profile-desc');
+  if (profileDesc) {
+    profileDesc.innerText = description || (isDelete ? "Deleting files..." : "Copying files...");
+  }
+  const profileConcurrency = document.getElementById('profile-concurrency');
+  if (profileConcurrency) {
+    profileConcurrency.innerText = `${concurrency} threads`;
+  }
   document.getElementById('stat-eta').innerText = 'Calculating...';
   document.getElementById('progress-percent').innerText = '0%';
   document.getElementById('status-msg').innerText = 'Initializing...';

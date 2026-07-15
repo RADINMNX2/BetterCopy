@@ -305,11 +305,8 @@ pub fn run_engine(
         let _ = SetThreadExecutionState(ES_SYSTEM_REQUIRED | ES_CONTINUOUS);
     }
 
-    let profile = profile_device(dest);
-    let concurrency = custom_concurrency.unwrap_or(profile.concurrency);
-
     // Build the flat work list
-    let work_list = match build_work_list(sources, dest) {
+    let work_list = match build_work_list(sources, dest, Some(&cancel_flag)) {
         Ok(wl) => wl,
         Err(e) => {
             unsafe {
@@ -320,10 +317,41 @@ pub fn run_engine(
                 bytes_copied: 0,
                 elapsed: start_time.elapsed(),
                 failures: vec![(dest.to_path_buf(), format!("Failed to build work list: {}", e))],
-                was_cancelled: false,
+                was_cancelled: e.kind() == std::io::ErrorKind::Interrupted || cancel_flag.load(Ordering::Relaxed),
             };
         }
     };
+
+    run_engine_with_work_list(
+        work_list,
+        sources,
+        dest,
+        is_move,
+        custom_concurrency,
+        cancel_flag,
+        progress_callback,
+    )
+}
+
+/// Run a multi-threaded copy/move operation with a pre-built work list.
+pub fn run_engine_with_work_list(
+    work_list: crate::walker::WorkList,
+    sources: &[PathBuf],
+    dest: &Path,
+    is_move: bool,
+    custom_concurrency: Option<usize>,
+    cancel_flag: Arc<AtomicBool>,
+    progress_callback: Option<Box<dyn Fn(usize, u64) + Send + Sync>>,
+) -> EngineSummary {
+    let start_time = Instant::now();
+
+    // Prevent system from sleeping during transfer
+    unsafe {
+        let _ = SetThreadExecutionState(ES_SYSTEM_REQUIRED | ES_CONTINUOUS);
+    }
+
+    let profile = profile_device(dest);
+    let concurrency = custom_concurrency.unwrap_or(profile.concurrency);
 
     // Ensure destination directory itself exists
     if let Err(e) = fs::create_dir_all(dest) {
@@ -594,14 +622,12 @@ pub fn run_delete_engine(
         let _ = SetThreadExecutionState(ES_SYSTEM_REQUIRED | ES_CONTINUOUS);
     }
 
-    let mut failures = Vec::new();
-    
     fn mut_or_empty_path(sources: &[PathBuf]) -> PathBuf {
         sources.first().cloned().unwrap_or_default()
     }
 
     // Build delete list using walker
-    let delete_list = match crate::walker::build_delete_list(sources) {
+    let delete_list = match crate::walker::build_delete_list(sources, Some(&cancel_flag)) {
         Ok(dl) => dl,
         Err(e) => {
             unsafe {
@@ -612,11 +638,36 @@ pub fn run_delete_engine(
                 bytes_copied: 0,
                 elapsed: start_time.elapsed(),
                 failures: vec![(mut_or_empty_path(sources), format!("Failed to build delete list: {}", e))],
-                was_cancelled: false,
+                was_cancelled: e.kind() == std::io::ErrorKind::Interrupted || cancel_flag.load(Ordering::Relaxed),
             };
         }
     };
     
+    run_delete_engine_with_delete_list(
+        delete_list,
+        sources,
+        concurrency,
+        cancel_flag,
+        progress_callback,
+    )
+}
+
+/// Run a multi-threaded parallel delete operation with a pre-built delete list.
+pub fn run_delete_engine_with_delete_list(
+    delete_list: crate::walker::DeleteList,
+    _sources: &[PathBuf],
+    concurrency: usize,
+    cancel_flag: Arc<AtomicBool>,
+    progress_callback: Option<Box<dyn Fn(usize, u64) + Send + Sync + 'static>>,
+) -> EngineSummary {
+    let start_time = Instant::now();
+    
+    // Prevent system sleep during operation
+    unsafe {
+        let _ = SetThreadExecutionState(ES_SYSTEM_REQUIRED | ES_CONTINUOUS);
+    }
+
+    let mut failures = Vec::new();
     let total_files = delete_list.files.len();
     let global_state = Arc::new(ProgressState {
         total_files,

@@ -112,17 +112,35 @@ pub fn run() {
           while let Ok(job) = copy_rx.recv() {
               cancel_flag_worker.store(false, Ordering::SeqCst);
               
-              match job {
+               match job {
                   Job::CopyMove { sources, dest, is_move } => {
+                      // Emit early copy-start to show the window instantly
+                      let _ = window_worker.emit("copy-start", StartPayload {
+                          sources: sources.iter().map(|p| p.display().to_string()).collect(),
+                          destination: dest.display().to_string(),
+                          description: "Analyzing files...".to_string(),
+                          concurrency: 4, // placeholder
+                          total_files: 0,
+                          total_bytes: 0,
+                      });
+                      
+                      let _ = window_worker.center();
+                      let _ = window_worker.show();
+                      let _ = window_worker.set_progress_bar(tauri::window::ProgressBarState {
+                          status: Some(tauri::window::ProgressBarStatus::Normal),
+                          progress: Some(0),
+                      });
+
                       // Walk tree to build work list
-                      let work_list = match better_copy_core::walker::build_work_list(&sources, &dest) {
+                      let work_list = match better_copy_core::walker::build_work_list(&sources, &dest, Some(&cancel_flag_worker)) {
                           Ok(wl) => wl,
                           Err(e) => {
+                              let is_cancelled = e.kind() == std::io::ErrorKind::Interrupted || cancel_flag_worker.load(Ordering::SeqCst);
                               let _ = window_worker.emit("copy-complete", CompletePayload {
                                   files_copied: 0,
                                   bytes_copied: 0,
-                                  failures: vec![(dest.display().to_string(), format!("Failed to build work list: {}", e))],
-                                  was_cancelled: false,
+                                  failures: if is_cancelled { vec![] } else { vec![(dest.display().to_string(), format!("Failed to build work list: {}", e))] },
+                                  was_cancelled: is_cancelled,
                               });
                               continue;
                           }
@@ -131,11 +149,21 @@ pub fn run() {
                       let total_files = work_list.total_files;
                       let total_bytes = work_list.total_bytes;
                       
+                      if cancel_flag_worker.load(Ordering::SeqCst) {
+                          let _ = window_worker.emit("copy-complete", CompletePayload {
+                              files_copied: 0,
+                              bytes_copied: 0,
+                              failures: vec![],
+                              was_cancelled: true,
+                          });
+                          continue;
+                      }
+
                       // Device profiling
                       let profile = better_copy_core::profiler::profile_device(&dest);
                       let concurrency = profile.concurrency;
                       
-                      // Start progress window setup
+                      // Start progress window setup with actual values
                       let _ = window_worker.emit("copy-start", StartPayload {
                           sources: sources.iter().map(|p| p.display().to_string()).collect(),
                           destination: dest.display().to_string(),
@@ -143,13 +171,6 @@ pub fn run() {
                           concurrency,
                           total_files,
                           total_bytes,
-                      });
-                      
-                      let _ = window_worker.center();
-                      let _ = window_worker.show();
-                      let _ = window_worker.set_progress_bar(tauri::window::ProgressBarState {
-                          status: Some(tauri::window::ProgressBarStatus::Normal),
-                          progress: Some(0),
                       });
                       
                       // Preflight checks
@@ -203,6 +224,16 @@ pub fn run() {
                           continue;
                       }
                       
+                      if cancel_flag_worker.load(Ordering::SeqCst) {
+                          let _ = window_worker.emit("copy-complete", CompletePayload {
+                              files_copied: 0,
+                              bytes_copied: 0,
+                              failures: vec![],
+                              was_cancelled: true,
+                          });
+                          continue;
+                      }
+
                       // Run copy engine
                       let window_progress = window_worker.clone();
                       let start_time = Instant::now();
@@ -268,7 +299,8 @@ pub fn run() {
                           }
                       });
                       
-                      let summary = better_copy_core::engine::run_engine(
+                      let summary = better_copy_core::engine::run_engine_with_work_list(
+                          work_list,
                           &sources,
                           &dest,
                           is_move,
@@ -305,34 +337,14 @@ pub fn run() {
                           continue;
                       }
                       
-                      let first_source = &sources[0];
-                      let profile = better_copy_core::profiler::profile_device(first_source);
-                      let concurrency = profile.concurrency;
-                      
-                      // Walk tree to build delete list
-                      let delete_list = match better_copy_core::walker::build_delete_list(&sources) {
-                          Ok(dl) => dl,
-                          Err(e) => {
-                              let _ = window_worker.emit("copy-complete", CompletePayload {
-                                  files_copied: 0,
-                                  bytes_copied: 0,
-                                  failures: vec![(first_source.display().to_string(), format!("Failed to build delete list: {}", e))],
-                                  was_cancelled: false,
-                              });
-                              continue;
-                          }
-                      };
-                      
-                      let total_files = delete_list.files.len();
-                      
-                      // Start progress window setup
+                      // Emit early copy-start to show the window instantly
                       let _ = window_worker.emit("copy-start", StartPayload {
                           sources: sources.iter().map(|p| p.display().to_string()).collect(),
                           destination: String::new(),
-                          description: format!("Deleting selected files ({})...", profile.description),
-                          concurrency,
-                          total_files,
-                          total_bytes: total_files as u64,
+                          description: "Analyzing files...".to_string(),
+                          concurrency: 4, // placeholder
+                          total_files: 0,
+                          total_bytes: 0,
                       });
                       
                       let _ = window_worker.center();
@@ -340,6 +352,49 @@ pub fn run() {
                       let _ = window_worker.set_progress_bar(tauri::window::ProgressBarState {
                           status: Some(tauri::window::ProgressBarStatus::Normal),
                           progress: Some(0),
+                      });
+
+                      let first_source = &sources[0];
+                      
+                      // Walk tree to build delete list
+                      let delete_list = match better_copy_core::walker::build_delete_list(&sources, Some(&cancel_flag_worker)) {
+                          Ok(dl) => dl,
+                          Err(e) => {
+                              let is_cancelled = e.kind() == std::io::ErrorKind::Interrupted || cancel_flag_worker.load(Ordering::SeqCst);
+                              let _ = window_worker.emit("copy-complete", CompletePayload {
+                                  files_copied: 0,
+                                  bytes_copied: 0,
+                                  failures: if is_cancelled { vec![] } else { vec![(first_source.display().to_string(), format!("Failed to build delete list: {}", e))] },
+                                  was_cancelled: is_cancelled,
+                              });
+                              continue;
+                          }
+                      };
+                      
+                      let total_files = delete_list.files.len();
+                      
+                      if cancel_flag_worker.load(Ordering::SeqCst) {
+                          let _ = window_worker.emit("copy-complete", CompletePayload {
+                              files_copied: 0,
+                              bytes_copied: 0,
+                              failures: vec![],
+                              was_cancelled: true,
+                          });
+                          continue;
+                      }
+
+                      // Device profiling
+                      let profile = better_copy_core::profiler::profile_device(first_source);
+                      let concurrency = profile.concurrency;
+                      
+                      // Start progress window setup with actual values
+                      let _ = window_worker.emit("copy-start", StartPayload {
+                          sources: sources.iter().map(|p| p.display().to_string()).collect(),
+                          destination: String::new(),
+                          description: format!("Deleting selected files ({})...", profile.description),
+                          concurrency,
+                          total_files,
+                          total_bytes: total_files as u64,
                       });
                       
                       // Run delete engine
@@ -407,7 +462,8 @@ pub fn run() {
                           }
                       });
                       
-                      let summary = better_copy_core::engine::run_delete_engine(
+                      let summary = better_copy_core::engine::run_delete_engine_with_delete_list(
+                          delete_list,
                           &sources,
                           concurrency,
                           cancel_flag_worker.clone(),
