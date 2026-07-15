@@ -200,14 +200,20 @@ listen('copy-start', (event) => {
   const labelSpeed = document.getElementById('label-speed');
   const preparingText = document.getElementById('preparing-text');
   
+  if (preparingText) {
+    preparingText.innerText = "Indexing files to speed up operation";
+  }
+  const preparingCount = document.getElementById('preparing-count');
+  if (preparingCount) {
+    preparingCount.innerText = "0 files indexed";
+  }
+
   if (isDelete) {
-    if (preparingText) preparingText.innerText = "Preparing delete...";
     if (labelSpeed) labelSpeed.innerText = "Delete Rate";
     document.getElementById('stat-speed').innerText = '0 files/s';
     document.getElementById('progress-bytes').innerText = `0 / ${total_files.toLocaleString()} files`;
     document.getElementById('stat-files').innerText = `0 / ${total_files.toLocaleString()}`;
   } else {
-    if (preparingText) preparingText.innerText = "Preparing copy...";
     if (labelSpeed) labelSpeed.innerText = "Speed";
     document.getElementById('stat-speed').innerText = '0.0 MB/s';
     const total_mb = (total_bytes / 1048576).toFixed(1);
@@ -272,7 +278,9 @@ listen('copy-progress', (event) => {
   
   document.getElementById('stat-files').innerText = `${files_completed.toLocaleString()} / ${total_files.toLocaleString()}`;
   
-  if (isDelete) {
+  const isCountBased = isDelete || total_bytes === 0;
+  
+  if (isCountBased) {
     document.getElementById('stat-speed').innerText = `${Math.round(speed_mbps).toLocaleString()} files/s`;
   } else {
     document.getElementById('stat-speed').innerText = `${speed_mbps.toFixed(1)} MB/s`;
@@ -286,12 +294,14 @@ listen('copy-progress', (event) => {
     document.getElementById('stat-eta').innerText = formatTime(eta_seconds);
   }
   
-  const percent = total_bytes > 0 ? Math.round((bytes_completed / total_bytes) * 100) : 0;
+  const percent = total_bytes > 0 
+    ? Math.round((bytes_completed / total_bytes) * 100) 
+    : (total_files > 0 ? Math.round((files_completed / total_files) * 100) : 0);
   document.getElementById('progress-percent').innerText = `${percent}%`;
   
-  if (isDelete) {
+  if (isCountBased) {
     document.getElementById('progress-bytes').innerText = `${files_completed.toLocaleString()} / ${total_files.toLocaleString()} files`;
-    document.getElementById('status-msg').innerText = 'Deleting...';
+    document.getElementById('status-msg').innerText = isDelete ? 'Deleting...' : 'Copying...';
   } else {
     const bytes_mb = (bytes_completed / 1048576).toFixed(1);
     const total_mb = (total_bytes / 1048576).toFixed(1);
@@ -347,5 +357,13 @@ listen('copy-complete', (event) => {
         console.error(e);
       }
     }, 1500);
+  }
+});
+
+listen('indexing-progress', (event) => {
+  const count = event.payload;
+  const preparingCount = document.getElementById('preparing-count');
+  if (preparingCount) {
+    preparingCount.innerText = `${count.toLocaleString()} files indexed`;
   }
 });

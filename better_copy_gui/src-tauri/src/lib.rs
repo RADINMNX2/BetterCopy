@@ -131,8 +131,19 @@ pub fn run() {
                           progress: Some(0),
                       });
 
+                      let last_emit = std::cell::Cell::new(Instant::now());
+                      let window_clone = window_worker.clone();
+                      let progress_cb = |count| {
+                          let now = Instant::now();
+                          let last = last_emit.get();
+                          if now.duration_since(last) >= Duration::from_millis(100) {
+                              let _ = window_clone.emit("indexing-progress", count);
+                              last_emit.set(now);
+                          }
+                      };
+
                       // Walk tree to build work list
-                      let work_list = match better_copy_core::walker::build_work_list(&sources, &dest, Some(&cancel_flag_worker)) {
+                      let work_list = match better_copy_core::walker::build_work_list(&sources, &dest, Some(&cancel_flag_worker), Some(&progress_cb)) {
                           Ok(wl) => wl,
                           Err(e) => {
                               let is_cancelled = e.kind() == std::io::ErrorKind::Interrupted || cancel_flag_worker.load(Ordering::SeqCst);
@@ -147,6 +158,7 @@ pub fn run() {
                       };
                       
                       let total_files = work_list.total_files;
+                      let _ = window_worker.emit("indexing-progress", total_files);
                       let total_bytes = work_list.total_bytes;
                       
                       if cancel_flag_worker.load(Ordering::SeqCst) {
@@ -239,6 +251,7 @@ pub fn run() {
                       let start_time = Instant::now();
                       let last_update = Mutex::new(Instant::now());
                       let last_bytes = AtomicU64::new(0);
+                      let last_files = std::sync::atomic::AtomicUsize::new(0);
                       
                       let progress_cb = Box::new(move |completed_files, completed_bytes| {
                           let now = Instant::now();
@@ -247,38 +260,65 @@ pub fn run() {
                           
                           if elapsed_since_update >= Duration::from_millis(250) {
                               let total_elapsed = now.duration_since(start_time);
-                              let prev_bytes = last_bytes.load(Ordering::Relaxed);
-                              let delta_bytes = completed_bytes - prev_bytes;
                               
-                              let speed = if elapsed_since_update.as_secs_f64() > 0.0 {
-                                  (delta_bytes as f64 / 1_048_576.0) / elapsed_since_update.as_secs_f64()
+                              let (speed, eta) = if total_bytes > 0 {
+                                  let prev_bytes = last_bytes.load(Ordering::Relaxed);
+                                  let delta_bytes = completed_bytes - prev_bytes;
+                                  let speed = if elapsed_since_update.as_secs_f64() > 0.0 {
+                                      (delta_bytes as f64 / 1_048_576.0) / elapsed_since_update.as_secs_f64()
+                                  } else {
+                                      0.0
+                                  };
+                                  let avg_speed = if total_elapsed.as_secs_f64() > 0.0 {
+                                      completed_bytes as f64 / total_elapsed.as_secs_f64()
+                                  } else {
+                                      0.0
+                                  };
+                                  let remaining_bytes = if total_bytes > completed_bytes {
+                                      total_bytes - completed_bytes
+                                  } else {
+                                      0
+                                  };
+                                  let eta = if avg_speed > 0.0 {
+                                      remaining_bytes as f64 / avg_speed
+                                  } else {
+                                      -1.0
+                                  };
+                                  last_bytes.store(completed_bytes, Ordering::Relaxed);
+                                  (speed, eta)
                               } else {
-                                  0.0
-                              };
-                              
-                              let avg_speed = if total_elapsed.as_secs_f64() > 0.0 {
-                                  completed_bytes as f64 / total_elapsed.as_secs_f64()
-                              } else {
-                                  0.0
-                              };
-                              
-                              let remaining_bytes = if total_bytes > completed_bytes {
-                                  total_bytes - completed_bytes
-                              } else {
-                                  0
-                              };
-                              
-                              let eta = if avg_speed > 0.0 {
-                                  remaining_bytes as f64 / avg_speed
-                              } else {
-                                  -1.0
+                                  let prev_files = last_files.load(Ordering::Relaxed);
+                                  let delta_files = completed_files - prev_files;
+                                  let speed = if elapsed_since_update.as_secs_f64() > 0.0 {
+                                      delta_files as f64 / elapsed_since_update.as_secs_f64()
+                                  } else {
+                                      0.0
+                                  };
+                                  let avg_rate = if total_elapsed.as_secs_f64() > 0.0 {
+                                      completed_files as f64 / total_elapsed.as_secs_f64()
+                                  } else {
+                                      0.0
+                                  };
+                                  let remaining_files = if total_files > completed_files {
+                                      total_files - completed_files
+                                  } else {
+                                      0
+                                  };
+                                  let eta = if avg_rate > 0.0 {
+                                      remaining_files as f64 / avg_rate
+                                  } else {
+                                      -1.0
+                                  };
+                                  last_files.store(completed_files, Ordering::Relaxed);
+                                  (speed, eta)
                               };
                               
                               *last_up = now;
-                              last_bytes.store(completed_bytes, Ordering::Relaxed);
                               
                               let percent = if total_bytes > 0 {
                                   ((completed_bytes as f64 / total_bytes as f64) * 100.0) as u64
+                              } else if total_files > 0 {
+                                  ((completed_files as f64 / total_files as f64) * 100.0) as u64
                               } else {
                                   0
                               };
@@ -356,8 +396,19 @@ pub fn run() {
 
                       let first_source = &sources[0];
                       
+                      let last_emit = std::cell::Cell::new(Instant::now());
+                      let window_clone = window_worker.clone();
+                      let progress_cb = |count| {
+                          let now = Instant::now();
+                          let last = last_emit.get();
+                          if now.duration_since(last) >= Duration::from_millis(100) {
+                              let _ = window_clone.emit("indexing-progress", count);
+                              last_emit.set(now);
+                          }
+                      };
+                      
                       // Walk tree to build delete list
-                      let delete_list = match better_copy_core::walker::build_delete_list(&sources, Some(&cancel_flag_worker)) {
+                      let delete_list = match better_copy_core::walker::build_delete_list(&sources, Some(&cancel_flag_worker), Some(&progress_cb)) {
                           Ok(dl) => dl,
                           Err(e) => {
                               let is_cancelled = e.kind() == std::io::ErrorKind::Interrupted || cancel_flag_worker.load(Ordering::SeqCst);
@@ -372,6 +423,7 @@ pub fn run() {
                       };
                       
                       let total_files = delete_list.files.len();
+                      let _ = window_worker.emit("indexing-progress", total_files);
                       
                       if cancel_flag_worker.load(Ordering::SeqCst) {
                           let _ = window_worker.emit("copy-complete", CompletePayload {

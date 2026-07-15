@@ -459,3 +459,9 @@ body {
   font-weight: 500;
   color: #9ca3af;
 }
+
+.preparing-count {
+  font-size: 10px;
+  color: #9ca3af;
+  margin-top: -2px;
+}

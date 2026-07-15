@@ -306,7 +306,7 @@ pub fn run_engine(
     }
 
     // Build the flat work list
-    let work_list = match build_work_list(sources, dest, Some(&cancel_flag)) {
+    let work_list = match build_work_list(sources, dest, Some(&cancel_flag), None) {
         Ok(wl) => wl,
         Err(e) => {
             unsafe {
@@ -627,7 +627,7 @@ pub fn run_delete_engine(
     }
 
     // Build delete list using walker
-    let delete_list = match crate::walker::build_delete_list(sources, Some(&cancel_flag)) {
+    let delete_list = match crate::walker::build_delete_list(sources, Some(&cancel_flag), None) {
         Ok(dl) => dl,
         Err(e) => {
             unsafe {
