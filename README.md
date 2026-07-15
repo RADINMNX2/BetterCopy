@@ -10,7 +10,14 @@
 
 > BetterCopy is designed to maximize speed on modern solid-state storage (NVMe, SSDs, UASP USBs). It does not improve copy or delete performance on mechanical hard drives (HDDs), where the engine auto-detects seek-penalty characteristics and safely falls back to single-threaded sequential execution to prevent disk head thrashing.
 
+### ✦ See It in Action
+
+BetterCopy vs. Windows Explorer (Explorer playback is sped up 6x for brevity):
+
+<video src="BetterCopyComparisonExplorer.mp4" width="100%" controls></video>
+
 ---
+
 
 ## ✦ The Philosophy
 
