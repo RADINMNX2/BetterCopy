@@ -138,7 +138,6 @@ bcopy.exe move "C:\source\path" "D:\dest\path"
 
 ### Prerequisites
 * [Rust](https://www.rust-lang.org/) (Stable channel)
-* [Node.js](https://nodejs.org/) & `npm` (for Tauri GUI)
 * Windows SDK (for Win32 COM and storage APIs)
 
 ### Step-by-Step Build
@@ -149,17 +148,13 @@ bcopy.exe move "C:\source\path" "D:\dest\path"
    cd BetterCopy
    ```
 
-2. Build the CLI engine:
+2. Build both the CLI and GUI executables:
    ```bash
-   cargo build --release --bin bcopy
+   cargo build --release
    ```
-
-3. Build and package the GUI app:
-   ```bash
-   cd better_copy_gui
-   npm install
-   npm run tauri build
-   ```
+   Once compiled, you will find the self-contained, portable executables in the workspace output directory:
+   * **GUI App:** `target/release/better_copy_gui.exe`
+   * **CLI Engine:** `target/release/bcopy.exe`
 
 ---
 
