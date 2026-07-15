@@ -4,16 +4,28 @@ use better_copy_core::trigger::HotkeyTrigger;
 
 fn main() {
     println!("Starting Hotkey Interceptor test...");
-    println!("Please open Windows Explorer or switch focus to the Desktop, copy some files (Ctrl+C), and then press Ctrl+Shift+V.");
+    println!("Please open Windows Explorer or switch focus to the Desktop, and try pressing both:");
+    println!("  1. Ctrl+Shift+V");
+    println!("  2. Ctrl+Shift+Delete");
     
-    let trigger = match HotkeyTrigger::start(|clipboard, dest| {
-        println!("\n*** HOTKEY TRIGGERED ***");
-        println!("Is Move (Cut): {}", clipboard.is_move);
-        println!("Sources (copied paths):");
-        for path in clipboard.paths {
-            println!("  - {:?}", path);
+    let trigger = match HotkeyTrigger::start(|event| {
+        match event {
+            better_copy_core::trigger::HotkeyEvent::Paste { clipboard, destination } => {
+                println!("\n*** PASTE EVENT TRIGGERED ***");
+                println!("Sources (copied paths):");
+                for path in clipboard.paths {
+                    println!("  - {:?}", path);
+                }
+                println!("Resolved Destination: {:?}", destination);
+            }
+            better_copy_core::trigger::HotkeyEvent::Delete { sources } => {
+                println!("\n*** DELETE EVENT TRIGGERED ***");
+                println!("Sources to delete:");
+                for path in sources {
+                    println!("  - {:?}", path);
+                }
+            }
         }
-        println!("Resolved Destination: {:?}", dest);
     }) {
         Ok(t) => t,
         Err(e) => {

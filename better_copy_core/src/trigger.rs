@@ -31,7 +31,8 @@ use windows::Win32::UI::Accessibility::{
 use windows::Win32::UI::Shell::{
     IShellWindows, ShellWindows, IWebBrowserApp, IShellBrowser, IFolderView2,
     IPersistFolder2, SHGetPathFromIDListW, SHGetKnownFolderPath, FOLDERID_Desktop,
-    KF_FLAG_DEFAULT
+    KF_FLAG_DEFAULT, IShellItemArray, IShellItem, SIGDN_FILESYSPATH, SWC_DESKTOP,
+    SWFO_NEEDDISPATCH
 };
 use windows::Win32::System::DataExchange::{
     OpenClipboard, CloseClipboard, GetClipboardData, IsClipboardFormatAvailable,
@@ -41,11 +42,14 @@ use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
 use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 
 const SID_S_TOP_LEVEL_BROWSER: GUID = GUID::from_u128(0x4C96BE40_915C_11CF_99D3_00AA004AE837);
-const HOTKEY_ID: i32 = 1;
+const PASTE_HOTKEY_ID: i32 = 1;
+const DELETE_HOTKEY_ID: i32 = 2;
 const MSG_RE_REGISTER: u32 = WM_USER + 1;
+const CSIDL_DESKTOP: i32 = 0;
 
 thread_local! {
-    static REGISTERED: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    static PASTE_REGISTERED: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    static DELETE_REGISTERED: std::cell::Cell<bool> = std::cell::Cell::new(false);
     static WINDOW_HWND: std::cell::Cell<HWND> = std::cell::Cell::new(HWND::default());
 }
 
@@ -54,6 +58,17 @@ thread_local! {
 pub struct ClipboardSources {
     pub paths: Vec<PathBuf>,
     pub is_move: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum HotkeyEvent {
+    Paste {
+        clipboard: ClipboardSources,
+        destination: PathBuf,
+    },
+    Delete {
+        sources: Vec<PathBuf>,
+    },
 }
 
 /// Reads CF_HDROP and Preferred DropEffect from the clipboard.
@@ -209,6 +224,93 @@ pub fn resolve_active_explorer_path(foreground_hwnd: HWND) -> Result<PathBuf, St
     }
 }
 
+fn get_paths_from_browser(web_browser: &IWebBrowserApp) -> Result<Vec<PathBuf>, String> {
+    unsafe {
+        let service_provider: IServiceProvider = web_browser.cast()
+            .map_err(|e| format!("Cast to IServiceProvider failed: {}", e))?;
+        let shell_browser: IShellBrowser = service_provider.QueryService(&SID_S_TOP_LEVEL_BROWSER)
+            .map_err(|e| format!("QueryService for IShellBrowser failed: {}", e))?;
+        let shell_view = shell_browser.QueryActiveShellView()
+            .map_err(|e| format!("QueryActiveShellView failed: {}", e))?;
+        let folder_view: IFolderView2 = shell_view.cast()
+            .map_err(|e| format!("Cast to IFolderView2 failed: {}", e))?;
+            
+        let selection: IShellItemArray = folder_view.GetSelection(true)
+            .map_err(|e| format!("GetSelection failed: {}", e))?;
+            
+        let count = selection.GetCount()
+            .map_err(|e| format!("GetCount failed: {}", e))?;
+            
+        let mut paths = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            let item: IShellItem = selection.GetItemAt(i)
+                .map_err(|e| format!("GetItemAt failed: {}", e))?;
+            let path_pwstr = item.GetDisplayName(SIGDN_FILESYSPATH)
+                .map_err(|e| format!("GetDisplayName failed: {}", e))?;
+            let path_str = path_pwstr.to_string().unwrap_or_default();
+            windows::Win32::System::Com::CoTaskMemFree(Some(path_pwstr.as_ptr() as *const _));
+            if !path_str.is_empty() {
+                paths.push(PathBuf::from(path_str));
+            }
+        }
+        Ok(paths)
+    }
+}
+
+pub fn resolve_active_explorer_selection(foreground_hwnd: HWND) -> Result<Vec<PathBuf>, String> {
+    unsafe {
+        let mut class_name = [0u16; 256];
+        let len = GetClassNameW(foreground_hwnd, &mut class_name);
+        let mut is_desktop = false;
+        if len > 0 {
+            let class_str = String::from_utf16_lossy(&class_name[..len as usize]);
+            if class_str == "Progman" || class_str == "WorkerW" {
+                is_desktop = true;
+            }
+        }
+
+        let shell_windows: IShellWindows = CoCreateInstance(&ShellWindows, None, CLSCTX_ALL)
+            .map_err(|e| format!("Failed to create ShellWindows: {}", e))?;
+
+        if is_desktop {
+            let mut hwnd_val = 0i32;
+            let vt_loc = VARIANT::from(CSIDL_DESKTOP);
+            let vt_empty = VARIANT::default();
+            // SWC_DESKTOP = 8, SWFO_NEEDDISPATCH = 1
+            let dispatch = shell_windows.FindWindowSW(&vt_loc, &vt_empty, SWC_DESKTOP, &mut hwnd_val, SWFO_NEEDDISPATCH)
+                .map_err(|e| format!("FindWindowSW for Desktop failed: {}", e))?;
+            let web_browser: IWebBrowserApp = dispatch.cast()
+                .map_err(|e| format!("Cast Desktop dispatch to IWebBrowserApp failed: {}", e))?;
+            return get_paths_from_browser(&web_browser);
+        }
+
+        let count = shell_windows.Count().map_err(|e| format!("Failed to get shell windows count: {}", e))?;
+        for i in 0..count {
+            let variant = VARIANT::from(i as i32);
+            let dispatch = match shell_windows.Item(&variant) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            
+            let web_browser: IWebBrowserApp = match dispatch.cast() {
+                Ok(wb) => wb,
+                Err(_) => continue,
+            };
+            
+            let hwnd = match web_browser.HWND() {
+                Ok(h) => h,
+                Err(_) => continue,
+            };
+            
+            if hwnd.0 == foreground_hwnd.0 as isize {
+                return get_paths_from_browser(&web_browser);
+            }
+        }
+        
+        Err("Active Explorer window selection could not be resolved".to_string())
+    }
+}
+
 /// Evaluates if the foreground window is Explorer or Desktop.
 fn is_explorer_or_desktop(hwnd: HWND) -> bool {
     if hwnd.0.is_null() {
@@ -232,17 +334,32 @@ fn update_hotkey_registration(hwnd: HWND, force_unregister: bool) {
         let fg = GetForegroundWindow();
         let eligible = !force_unregister && is_explorer_or_desktop(fg);
         
-        REGISTERED.with(|reg| {
+        PASTE_REGISTERED.with(|reg| {
             let currently_registered = reg.get();
             if eligible && !currently_registered {
-                let res = RegisterHotKey(hwnd, HOTKEY_ID, MOD_CONTROL | MOD_SHIFT, 0x56);
-                println!("[Trigger] Registering hotkey: Result={:?}", res);
+                let res = RegisterHotKey(hwnd, PASTE_HOTKEY_ID, MOD_CONTROL | MOD_SHIFT, 0x56); // 'V'
+                println!("[Trigger] Registering paste hotkey: Result={:?}", res);
                 if res.is_ok() {
                     reg.set(true);
                 }
             } else if !eligible && currently_registered {
-                let res = UnregisterHotKey(hwnd, HOTKEY_ID);
-                println!("[Trigger] Unregistering hotkey: Result={:?}", res);
+                let res = UnregisterHotKey(hwnd, PASTE_HOTKEY_ID);
+                println!("[Trigger] Unregistering paste hotkey: Result={:?}", res);
+                reg.set(false);
+            }
+        });
+
+        DELETE_REGISTERED.with(|reg| {
+            let currently_registered = reg.get();
+            if eligible && !currently_registered {
+                let res = RegisterHotKey(hwnd, DELETE_HOTKEY_ID, MOD_CONTROL | MOD_SHIFT, 0x2E); // VK_DELETE (0x2E)
+                println!("[Trigger] Registering delete hotkey: Result={:?}", res);
+                if res.is_ok() {
+                    reg.set(true);
+                }
+            } else if !eligible && currently_registered {
+                let res = UnregisterHotKey(hwnd, DELETE_HOTKEY_ID);
+                println!("[Trigger] Unregistering delete hotkey: Result={:?}", res);
                 reg.set(false);
             }
         });
@@ -276,11 +393,20 @@ fn check_rename_box_focus(foreground_hwnd: HWND) -> bool {
     }
 }
 
-/// Replays Ctrl+Shift+V to the system using SendInput.
-fn replay_hotkey(hwnd: HWND) {
+/// Replays a hotkey (Ctrl+Shift+V or Ctrl+Shift+Delete) to the system using SendInput.
+fn replay_hotkey(hwnd: HWND, hotkey_id: i32) {
     unsafe {
-        let _ = UnregisterHotKey(hwnd, HOTKEY_ID);
-        REGISTERED.with(|reg| reg.set(false));
+        let vk = if hotkey_id == PASTE_HOTKEY_ID {
+            let _ = UnregisterHotKey(hwnd, PASTE_HOTKEY_ID);
+            PASTE_REGISTERED.with(|reg| reg.set(false));
+            0x56 // 'V'
+        } else if hotkey_id == DELETE_HOTKEY_ID {
+            let _ = UnregisterHotKey(hwnd, DELETE_HOTKEY_ID);
+            DELETE_REGISTERED.with(|reg| reg.set(false));
+            0x2E // VK_DELETE
+        } else {
+            return;
+        };
         
         let mut inputs = [INPUT::default(); 6];
         
@@ -304,20 +430,20 @@ fn replay_hotkey(hwnd: HWND) {
             dwExtraInfo: 0,
         };
         
-        // V Down
+        // Key Down
         inputs[2].r#type = INPUT_KEYBOARD;
         inputs[2].Anonymous.ki = KEYBDINPUT {
-            wVk: VIRTUAL_KEY(0x56), // V
+            wVk: VIRTUAL_KEY(vk),
             wScan: 0,
             dwFlags: KEYBD_EVENT_FLAGS(0),
             time: 0,
             dwExtraInfo: 0,
         };
         
-        // V Up
+        // Key Up
         inputs[3].r#type = INPUT_KEYBOARD;
         inputs[3].Anonymous.ki = KEYBDINPUT {
-            wVk: VIRTUAL_KEY(0x56),
+            wVk: VIRTUAL_KEY(vk),
             wScan: 0,
             dwFlags: KEYBD_EVENT_FLAGS(2), // KEYEVENTF_KEYUP
             time: 0,
@@ -386,16 +512,15 @@ unsafe extern "system" fn trigger_window_proc(
         match msg {
             WM_HOTKEY => {
                 println!("[Trigger] WM_HOTKEY message received by window!");
-                if wparam.0 as i32 == HOTKEY_ID {
-                    let fg = GetForegroundWindow();
-                    if check_rename_box_focus(fg) {
-                        println!("[Trigger] Focus is inside a rename/edit box, replaying native keys.");
-                        replay_hotkey(hwnd);
-                    } else {
-                        if let Some(cb_mutex) = TRIGGER_CALLBACK.get() {
-                            if let Some(cb) = cb_mutex.lock().unwrap().as_ref() {
-                                cb();
-                            }
+                let hotkey_id = wparam.0 as i32;
+                let fg = GetForegroundWindow();
+                if check_rename_box_focus(fg) {
+                    println!("[Trigger] Focus is inside a rename/edit box, replaying native keys.");
+                    replay_hotkey(hwnd, hotkey_id);
+                } else {
+                    if let Some(cb_mutex) = TRIGGER_CALLBACK.get() {
+                        if let Some(cb) = cb_mutex.lock().unwrap().as_ref() {
+                            cb(hotkey_id);
                         }
                     }
                 }
@@ -411,7 +536,7 @@ unsafe extern "system" fn trigger_window_proc(
 }
 
 // Global thread-safe slot to hold trigger callback.
-static TRIGGER_CALLBACK: OnceLock<Mutex<Option<Box<dyn Fn() + Send + Sync + 'static>>>> = OnceLock::new();
+static TRIGGER_CALLBACK: OnceLock<Mutex<Option<Box<dyn Fn(i32) + Send + Sync + 'static>>>> = OnceLock::new();
 
 /// Handler for the active trigger loop.
 pub struct HotkeyTrigger {
@@ -424,33 +549,47 @@ impl HotkeyTrigger {
     /// Starts the hotkey monitoring thread.
     pub fn start<F>(trigger_callback: F) -> Result<Self, String>
     where
-        F: Fn(ClipboardSources, PathBuf) + Send + Sync + 'static,
+        F: Fn(HotkeyEvent) + Send + Sync + 'static,
     {
         let exit_flag = Arc::new(AtomicBool::new(false));
         let exit_flag_clone = exit_flag.clone();
         
         let (hwnd_tx, hwnd_rx) = std::sync::mpsc::channel();
         
-        // Wrap the user-facing callback to resolve clipboard and Explorer path upon trigger
-        let wrapped_cb = move || {
+        // Wrap the user-facing callback to resolve clipboard or selection upon trigger
+        let wrapped_cb = move |hotkey_id| {
             let fg = unsafe { GetForegroundWindow() };
-            let dest = match resolve_active_explorer_path(fg) {
-                Ok(path) => path,
-                Err(e) => {
-                    eprintln!("Trigger error: {}", e);
-                    return;
+            if hotkey_id == PASTE_HOTKEY_ID {
+                let dest = match resolve_active_explorer_path(fg) {
+                    Ok(path) => path,
+                    Err(e) => {
+                        eprintln!("Trigger error (resolve path): {}", e);
+                        return;
+                    }
+                };
+                
+                let clipboard = match read_clipboard_sources() {
+                    Ok(sources) => sources,
+                    Err(e) => {
+                        eprintln!("Trigger error (read clipboard): {}", e);
+                        return;
+                    }
+                };
+                
+                trigger_callback(HotkeyEvent::Paste { clipboard, destination: dest });
+            } else if hotkey_id == DELETE_HOTKEY_ID {
+                let sources = match resolve_active_explorer_selection(fg) {
+                    Ok(paths) => paths,
+                    Err(e) => {
+                        eprintln!("Trigger error (resolve selection): {}", e);
+                        return;
+                    }
+                };
+                
+                if !sources.is_empty() {
+                    trigger_callback(HotkeyEvent::Delete { sources });
                 }
-            };
-            
-            let clipboard = match read_clipboard_sources() {
-                Ok(sources) => sources,
-                Err(e) => {
-                    eprintln!("Trigger error: {}", e);
-                    return;
-                }
-            };
-            
-            trigger_callback(clipboard, dest);
+            }
         };
         
         let cb_mutex = TRIGGER_CALLBACK.get_or_init(|| Mutex::new(None));

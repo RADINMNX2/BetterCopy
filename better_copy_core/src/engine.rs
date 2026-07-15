@@ -579,3 +579,146 @@ pub fn run_engine(
         was_cancelled,
     }
 }
+
+/// Run a multi-threaded parallel delete operation.
+pub fn run_delete_engine(
+    sources: &[PathBuf],
+    concurrency: usize,
+    cancel_flag: Arc<AtomicBool>,
+    progress_callback: Option<Box<dyn Fn(usize, u64) + Send + Sync + 'static>>,
+) -> EngineSummary {
+    let start_time = Instant::now();
+    
+    // Prevent system sleep during operation
+    unsafe {
+        let _ = SetThreadExecutionState(ES_SYSTEM_REQUIRED | ES_CONTINUOUS);
+    }
+
+    let mut failures = Vec::new();
+    
+    fn mut_or_empty_path(sources: &[PathBuf]) -> PathBuf {
+        sources.first().cloned().unwrap_or_default()
+    }
+
+    // Build delete list using walker
+    let delete_list = match crate::walker::build_delete_list(sources) {
+        Ok(dl) => dl,
+        Err(e) => {
+            unsafe {
+                let _ = SetThreadExecutionState(ES_CONTINUOUS);
+            }
+            return EngineSummary {
+                files_copied: 0,
+                bytes_copied: 0,
+                elapsed: start_time.elapsed(),
+                failures: vec![(mut_or_empty_path(sources), format!("Failed to build delete list: {}", e))],
+                was_cancelled: false,
+            };
+        }
+    };
+    
+    let total_files = delete_list.files.len();
+    let global_state = Arc::new(ProgressState {
+        total_files,
+        total_bytes: total_files as u64,
+        files_completed: AtomicUsize::new(0),
+        bytes_completed: AtomicU64::new(0),
+        cancel_flag: cancel_flag.clone(),
+        failed_files: Arc::new(Mutex::new(Vec::new())),
+    });
+
+    if total_files > 0 {
+        // Multi-threaded deletion
+        let files = Arc::new(delete_list.files);
+        let file_idx = Arc::new(AtomicUsize::new(0));
+
+        // Spawn progress reporting side-thread
+        let progress_state = global_state.clone();
+        let progress_cancel = cancel_flag.clone();
+        let progress_handle = thread::spawn(move || {
+            while !progress_cancel.load(Ordering::Relaxed) {
+                let completed = progress_state.files_completed.load(Ordering::Relaxed);
+                if let Some(ref cb) = progress_callback {
+                    cb(completed, completed as u64);
+                }
+                thread::sleep(Duration::from_millis(100));
+                if completed >= progress_state.total_files {
+                    break;
+                }
+            }
+        });
+
+        // Spawn worker threads
+        let mut threads = Vec::new();
+        for _ in 0..concurrency {
+            let idx = file_idx.clone();
+            let items = files.clone();
+            let state = global_state.clone();
+            let c_flag = cancel_flag.clone();
+
+            threads.push(thread::spawn(move || {
+                loop {
+                    if c_flag.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let current = idx.fetch_add(1, Ordering::SeqCst);
+                    if current >= items.len() {
+                        break;
+                    }
+                    let path = &items[current];
+                    
+                    // Note: Check if metadata is directory for directory symlinks/junctions
+                    let res = if path.is_dir() {
+                        fs::remove_dir(path)
+                    } else {
+                        fs::remove_file(path)
+                    };
+                    
+                    if let Err(e) = res {
+                        state.failed_files.lock().unwrap().push((path.clone(), e.to_string()));
+                    }
+                    
+                    state.files_completed.fetch_add(1, Ordering::SeqCst);
+                }
+            }));
+        }
+
+        // Wait for workers
+        for t in threads {
+            let _ = t.join();
+        }
+        let _ = progress_handle.join();
+    }
+
+    // Now delete directories in reverse depth-first order
+    let was_cancelled = cancel_flag.load(Ordering::Relaxed);
+    if !was_cancelled {
+        let mut sorted_dirs = delete_list.dirs;
+        // Sort by path length descending (so child directories are deleted before parents)
+        sorted_dirs.sort_by(|a, b| b.to_string_lossy().len().cmp(&a.to_string_lossy().len()));
+        
+        for dir in sorted_dirs {
+            if let Err(e) = fs::remove_dir(&dir) {
+                failures.push((dir, format!("Failed to delete directory: {}", e)));
+            }
+        }
+    }
+
+    // Merge failures
+    let mut worker_failures = global_state.failed_files.lock().unwrap().clone();
+    failures.append(&mut worker_failures);
+
+    // Restore sleep states
+    unsafe {
+        let _ = SetThreadExecutionState(ES_CONTINUOUS);
+    }
+
+    EngineSummary {
+        files_copied: global_state.files_completed.load(Ordering::Relaxed),
+        bytes_copied: global_state.files_completed.load(Ordering::Relaxed) as u64,
+        elapsed: start_time.elapsed(),
+        failures,
+        was_cancelled,
+    }
+}
+

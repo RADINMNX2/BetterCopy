@@ -193,3 +193,59 @@ pub fn build_work_list(sources: &[PathBuf], dest_root: &Path) -> std::io::Result
 
     Ok(work_list)
 }
+
+#[derive(Debug, Default, Clone)]
+pub struct DeleteList {
+    pub files: Vec<PathBuf>,
+    pub dirs: Vec<PathBuf>,
+}
+
+/// Recursively traverses directory for building a deletion list.
+fn walk_dir_for_delete(dir: &Path, delete_list: &mut DeleteList) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = ensure_long_path(&entry.path());
+        let metadata = fs::symlink_metadata(&path)?;
+        
+        let file_attr = metadata.file_attributes();
+        if (file_attr & FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+            // Do not traverse reparse points. Just treat them as files to delete the link itself.
+            delete_list.files.push(path);
+            continue;
+        }
+
+        if metadata.is_dir() {
+            delete_list.dirs.push(path.clone());
+            walk_dir_for_delete(&path, delete_list)?;
+        } else {
+            delete_list.files.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Builds the flat delete list of directories and files.
+pub fn build_delete_list(sources: &[PathBuf]) -> std::io::Result<DeleteList> {
+    let mut delete_list = DeleteList::default();
+
+    for source in sources {
+        let src_long = ensure_long_path(source);
+        let metadata = fs::symlink_metadata(&src_long)?;
+        let file_attr = metadata.file_attributes();
+
+        if (file_attr & FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+            delete_list.files.push(src_long);
+            continue;
+        }
+
+        if metadata.is_dir() {
+            delete_list.dirs.push(src_long.clone());
+            walk_dir_for_delete(&src_long, &mut delete_list)?;
+        } else {
+            delete_list.files.push(src_long);
+        }
+    }
+
+    Ok(delete_list)
+}
+

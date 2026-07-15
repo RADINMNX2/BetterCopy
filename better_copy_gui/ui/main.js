@@ -9,6 +9,7 @@ let copyActive = false;
 let threadInterval = null;
 let lastGraphUpdateTime = 0;
 let currentPercent = 0;
+let isDelete = false;
 
 // Helper to get file basename
 function getBasename(path) {
@@ -185,9 +186,30 @@ function drawSpeedGraph(percent, speed) {
 listen('copy-start', (event) => {
   const { sources, destination, description, concurrency, total_files, total_bytes } = event.payload;
   
+  // Detect if this is a delete operation (no destination path)
+  isDelete = !destination;
+  
   // Show preparing loader, hide main dashboard
   document.getElementById('preparing-view').style.display = 'flex';
   document.getElementById('dashboard').style.display = 'none';
+  
+  const labelSpeed = document.getElementById('label-speed');
+  const preparingText = document.getElementById('preparing-text');
+  
+  if (isDelete) {
+    if (preparingText) preparingText.innerText = "Preparing delete...";
+    if (labelSpeed) labelSpeed.innerText = "Delete Rate";
+    document.getElementById('stat-speed').innerText = '0 files/s';
+    document.getElementById('progress-bytes').innerText = `0 / ${total_files.toLocaleString()} files`;
+    document.getElementById('stat-files').innerText = `0 / ${total_files.toLocaleString()}`;
+  } else {
+    if (preparingText) preparingText.innerText = "Preparing copy...";
+    if (labelSpeed) labelSpeed.innerText = "Speed";
+    document.getElementById('stat-speed').innerText = '0.0 MB/s';
+    const total_mb = (total_bytes / 1048576).toFixed(1);
+    document.getElementById('progress-bytes').innerText = `0.0 MB / ${total_mb} MB`;
+    document.getElementById('stat-files').innerText = `0 / ${total_files.toLocaleString()}`;
+  }
   
   // Reset graph history and clear canvas
   speedHistory = [];
@@ -199,17 +221,10 @@ listen('copy-start', (event) => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
   
-  document.getElementById('profile-desc').innerText = description || "Copying files...";
+  document.getElementById('profile-desc').innerText = description || (isDelete ? "Deleting files..." : "Copying files...");
   document.getElementById('profile-concurrency').innerText = `${concurrency} threads`;
-  
-  document.getElementById('stat-files').innerText = `0 / ${total_files}`;
-  document.getElementById('stat-speed').innerText = '0.0 MB/s';
   document.getElementById('stat-eta').innerText = 'Calculating...';
-  
   document.getElementById('progress-percent').innerText = '0%';
-  
-  const total_mb = (total_bytes / 1048576).toFixed(1);
-  document.getElementById('progress-bytes').innerText = `0.0 MB / ${total_mb} MB`;
   document.getElementById('status-msg').innerText = 'Initializing...';
   document.getElementById('cancel-btn').style.display = 'inline-block';
   
@@ -220,11 +235,17 @@ listen('copy-start', (event) => {
   sources.forEach((src) => {
     const item = document.createElement('div');
     item.className = 'job-item';
-    item.innerHTML = `
-      <span style="font-weight: 500; color: #f3f4f6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;" title="${src}">${getBasename(src)}</span>
-      <span style="color: #6b7280; margin: 0 8px;">➔</span>
-      <span style="color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;" title="${destination}">${getBasename(destination)}</span>
-    `;
+    if (isDelete) {
+      item.innerHTML = `
+        <span style="font-weight: 500; color: #f87171; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 440px;" title="${src}">🗑️ Delete: ${getBasename(src)}</span>
+      `;
+    } else {
+      item.innerHTML = `
+        <span style="font-weight: 500; color: #f3f4f6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;" title="${src}">${getBasename(src)}</span>
+        <span style="color: #6b7280; margin: 0 8px;">➔</span>
+        <span style="color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;" title="${destination}">${getBasename(destination)}</span>
+      `;
+    }
     jobsList.appendChild(item);
   });
   
@@ -239,8 +260,13 @@ listen('copy-progress', (event) => {
   document.getElementById('preparing-view').style.display = 'none';
   document.getElementById('dashboard').style.display = 'flex';
   
-  document.getElementById('stat-files').innerText = `${files_completed} / ${total_files}`;
-  document.getElementById('stat-speed').innerText = `${speed_mbps.toFixed(1)} MB/s`;
+  document.getElementById('stat-files').innerText = `${files_completed.toLocaleString()} / ${total_files.toLocaleString()}`;
+  
+  if (isDelete) {
+    document.getElementById('stat-speed').innerText = `${Math.round(speed_mbps).toLocaleString()} files/s`;
+  } else {
+    document.getElementById('stat-speed').innerText = `${speed_mbps.toFixed(1)} MB/s`;
+  }
   
   if (eta_seconds < 0) {
     document.getElementById('stat-eta').innerText = 'Calculating...';
@@ -253,10 +279,15 @@ listen('copy-progress', (event) => {
   const percent = total_bytes > 0 ? Math.round((bytes_completed / total_bytes) * 100) : 0;
   document.getElementById('progress-percent').innerText = `${percent}%`;
   
-  const bytes_mb = (bytes_completed / 1048576).toFixed(1);
-  const total_mb = (total_bytes / 1048576).toFixed(1);
-  document.getElementById('progress-bytes').innerText = `${bytes_mb} MB / ${total_mb} MB`;
-  document.getElementById('status-msg').innerText = 'Copying...';
+  if (isDelete) {
+    document.getElementById('progress-bytes').innerText = `${files_completed.toLocaleString()} / ${total_files.toLocaleString()} files`;
+    document.getElementById('status-msg').innerText = 'Deleting...';
+  } else {
+    const bytes_mb = (bytes_completed / 1048576).toFixed(1);
+    const total_mb = (total_bytes / 1048576).toFixed(1);
+    document.getElementById('progress-bytes').innerText = `${bytes_mb} MB / ${total_mb} MB`;
+    document.getElementById('status-msg').innerText = 'Copying...';
+  }
   
   const now = Date.now();
   if (now - lastGraphUpdateTime >= 250 || speedHistory.length === 0 || percent === 100) {
