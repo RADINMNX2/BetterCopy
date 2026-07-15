@@ -6,9 +6,9 @@
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-0078d7.svg)](https://microsoft.com)
 [![Language: Rust](https://img.shields.io/badge/Language-Rust-ea4a35.svg)](https://www.rust-lang.org/)
 
-**BetterCopy** is an auto-tuning, parallel copy engine for Windows. It provides a blistering-fast replacement for native file copy operations, bound directly to a global hotkey (**`Ctrl+Shift+V`**) that activates only when you focus Windows Explorer or the Desktop.
+**BetterCopy** is an auto-tuning, parallel copy and delete engine for Windows. It provides a blistering-fast replacement for native file copy and delete operations, bound directly to global hotkeys (**`Ctrl+Shift+V`** for paste and **`Ctrl+Shift+Delete`** for delete) that activate only when you focus Windows Explorer or the Desktop.
 
-> BetterCopy is designed to maximize speed on modern solid-state storage (NVMe, SSDs, UASP USBs). It does not improve copy performance on mechanical hard drives (HDDs), where the engine auto-detects seek-penalty characteristics and safely falls back to a single-threaded sequential copy to prevent disk head thrashing.
+> BetterCopy is designed to maximize speed on modern solid-state storage (NVMe, SSDs, UASP USBs). It does not improve copy or delete performance on mechanical hard drives (HDDs), where the engine auto-detects seek-penalty characteristics and safely falls back to single-threaded sequential execution to prevent disk head thrashing.
 
 ---
 
@@ -34,7 +34,7 @@ BetterCopy occupies a unique sweet spot in the file-transfer ecosystem, bridging
 | :--- | :--- | :--- | :--- | :--- |
 | **Speed (Tiny Files)** | 🐌 Slow (Sequential I/O) | ⚡ Fast (Parallelized) | ⚡ Fast (Parallelized) | ⚡ **Fast (Parallelized)** |
 | **Interface** | Native & Seamless | CLI Only (Shell/Scripts) | Heavy custom GUI / Overlay | **Transient Dashboard (Auto-dismisses)** |
-| **Trigger** | `Ctrl+V` | Manual command invocation | Overrides standard copy handlers | **`Ctrl+Shift+V` (Focus-gated)** |
+| **Trigger** | `Ctrl+V` / `Shift+Delete` | Manual command invocation | Overrides standard copy handlers | **`Ctrl+Shift+V` / `Ctrl+Shift+Delete` (Focus-gated)** |
 | **System Residue** | None (Built-in) | None | System services & registry hooks | **None (No admin required, zero residue)** |
 | **Security Footprint** | None | None | DLL Injection / Shell Hooks (Trips AV) | **None (Safe native Win32 & COM APIs)** |
 | **Configuration** | Zero Config | Complex flags (`/MT`, `/J`, `/E`) | Manual buffer & cache size tuning | **Zero Config (IOCTL-based Auto-Tuning)** |
@@ -45,9 +45,11 @@ BetterCopy occupies a unique sweet spot in the file-transfer ecosystem, bridging
 
 Windows Explorer copies files sequentially, one-by-one. Third-party tools either require you to use their own clunky file manager or inject dangerous hooks into the Windows shell. BetterCopy offers a third way:
 
-1. **Focus-Gated Trigger:** A lightweight message-only Win32 window registers a global hotkey (`Ctrl+Shift+V`). 
-2. **Context Gating:** It listens to native Windows focus events (`SetWinEventHook`) to ensure the hotkey is only active when Windows Explorer (`CabinetWClass`) or the Desktop is in the foreground. If you are renaming a file or focused in another application, the keystroke passes through naturally.
-3. **COM Destination Resolution:** When triggered, it queries the active Explorer window via COM APIs (`IShellWindows` ➔ `IFolderView2`) to find exactly where your cursor is focused, reads the source files from your clipboard (`CF_HDROP`), and starts copying.
+1. **Focus-Gated Trigger:** A lightweight message-only Win32 window registers global hotkeys (`Ctrl+Shift+V` for paste and `Ctrl+Shift+Delete` for delete). 
+2. **Context Gating:** It listens to native Windows focus events (`SetWinEventHook`) to ensure hotkeys are only active when Windows Explorer (`CabinetWClass`) or the Desktop is in the foreground. If you are renaming a file or focused in another application, the keystrokes pass through naturally.
+3. **COM Path & Selection Resolution:** When triggered, it queries the active Explorer window via COM APIs (`IShellWindows` ➔ `IFolderView2`) to find exactly where your cursor is focused:
+   * **For Copy/Move:** It reads the source files from your clipboard (`CF_HDROP`) and starts copying to the resolved destination.
+   * **For Delete:** It queries the currently selected items via COM (`GetSelection`), maps them to filesystem paths, and deletes them in parallel.
 4. **Auto-Tuning Engine:** It queries physical storage geometries using Win32 storage IOCTLs:
    * **NVMe SSDs:** Automatically ramps up thread concurrency (16 threads by default) to maximize queue depth.
    * **HDDs:** Safely falls back to single-threaded sequential copying to prevent thrashing.
@@ -99,12 +101,19 @@ We benchmarked BetterCopy against Microsoft's industry-standard `robocopy` using
 
 ## ✦ Usage
 
-### Global Hotkey (GUI)
+### Global Hotkey (Copy/Paste)
 1. Launch the BetterCopy daemon (`better_copy_gui.exe`).
 2. Go to Windows Explorer or your Desktop.
 3. Copy one or more folders (`Ctrl+C`).
 4. Navigate to your target directory and press **`Ctrl+Shift+V`**.
 5. A beautiful, transient Tauri progress dashboard will show the execution plan, speed, and real-time concurrency status.
+
+### Global Hotkey (Delete)
+1. Launch the BetterCopy daemon (`better_copy_gui.exe`).
+2. Go to Windows Explorer or your Desktop.
+3. Select one or more files/folders.
+4. Press **`Ctrl+Shift+Delete`**.
+5. The Tauri dashboard will pop up, displaying a transient deletion progress bar, delete rate (in files/second), and a live Canvas speed chart.
 
 ### Command Line Interface (`bcopy`)
 For scripting, automation, or CLI-first workflows:
@@ -170,8 +179,9 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ### Core Copy Engine
 - [x] **Focus-Gated Global Hotkey (`Ctrl+Shift+V`)** — Activates only when standard Windows Explorer or Desktop is in the foreground.
-- [x] **Rename Guard** — Passes keystroke through when editing file names.
-- [x] **Context Path Resolution** — Dynamically queries active Explorer via COM APIs and clipboard `CF_HDROP`.
+- [x] **Focus-Gated Global Hotkey (`Ctrl+Shift+Delete`)** — High-performance parallel deletion of selected items in Windows Explorer or Desktop.
+- [x] **Rename Guard** — Passes keystrokes through when editing file names.
+- [x] **Context Path & Selection Resolution** — Dynamically queries active Explorer via COM APIs, clipboard `CF_HDROP`, or shell selection lists.
 - [x] **Storage Profiling & Auto-Tuning** — Detects HDD vs SSD (seek penalty) and UASP vs BOT USB via Win32 storage IOCTLs to auto-select optimal thread concurrency.
 - [x] **Path & Loop Protection** — Bypasses `MAX_PATH` (using `\\?\` prefix) and skips reparse points (symlinks/junctions).
 - [x] **Dual-Queue Architecture** — Separate worker pools for small (<1MB) and large (>=1MB) files to prevent starvation.
