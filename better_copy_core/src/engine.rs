@@ -225,13 +225,21 @@ pub fn run_engine_with_work_list(
         failed_files: Arc::new(Mutex::new(Vec::new())),
     });
 
+    // Add preflight skipped links to failures
+    if !work_list.skipped_links.is_empty() {
+        let mut failed = global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner());
+        for (path, err) in &work_list.skipped_links {
+            failed.push((path.clone(), err.clone()));
+        }
+    }
+
     // 1. Recreate folder structure
     for dir in &work_list.dirs {
         if cancel_flag.load(Ordering::Relaxed) {
             break;
         }
         if let Err(e) = fs::create_dir_all(&dir.dest_path) {
-            global_state.failed_files.lock().unwrap().push((
+            global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((
                 dir.src_path.clone(),
                 format!("Failed to create directory {}: {}", dir.dest_path.display(), e),
             ));

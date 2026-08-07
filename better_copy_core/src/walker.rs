@@ -4,6 +4,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use windows::core::PCWSTR;
+use windows::Win32::Storage::FileSystem::{
+    CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+};
+use windows::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+
 // Win32 file attribute for reparse point (junctions/symlinks)
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
 
@@ -27,6 +34,7 @@ pub struct WorkList {
     pub large_files: Vec<CopyItem>,
     pub total_files: usize,
     pub total_bytes: u64,
+    pub skipped_links: Vec<(PathBuf, String)>,
 }
 
 /// Helper to convert a path to a Windows long path format (prefixed with \\?\)
@@ -89,8 +97,9 @@ fn walk_dir(
         let metadata = fs::symlink_metadata(&src_path)?;
         let file_attr = metadata.file_attributes();
         
-        // Skip reparse points (junction loops, symlinks)
+        // Skip reparse points (junction loops, symlinks) and log them
         if (file_attr & FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+            work_list.skipped_links.push((src_path.clone(), "Skipped symlink/junction".to_string()));
             continue;
         }
 
@@ -102,6 +111,10 @@ fn walk_dir(
         let last_write_time = metadata.last_write_time();
 
         if metadata.is_dir() {
+            // Guard against recursive directory copying (e.g. copying a folder into itself)
+            if is_self_copy(&src_path, dest_dir) {
+                continue;
+            }
             work_list.dirs.push(CopyItem {
                 src_path: src_path.clone(),
                 dest_path: dest_path.clone(),
@@ -155,6 +168,7 @@ pub fn build_work_list(
 ) -> std::io::Result<WorkList> {
     let mut work_list = WorkList::default();
     let dest_root_long = ensure_long_path(dest_root);
+    let mut planned_dests = std::collections::HashSet::new();
 
     for source in sources {
         if let Some(cancel) = cancel_flag {
@@ -166,8 +180,9 @@ pub fn build_work_list(
         let metadata = fs::symlink_metadata(&src_long)?;
         let file_attr = metadata.file_attributes();
 
-        // Skip reparse points at root
+        // Skip reparse points at root and log them
         if (file_attr & FILE_ATTRIBUTE_REPARSE_POINT) != 0 {
+            work_list.skipped_links.push((src_long.clone(), "Skipped symlink/junction at root".to_string()));
             continue;
         }
 
@@ -177,26 +192,23 @@ pub fn build_work_list(
         };
         let mut target_dest = dest_root_long.join(file_name);
 
-        if src_long == target_dest {
-            // Generate a unique name by appending suffix (e.g. "foo - Copy.txt")
+        // Resolve self-copy and name collisions with already planned destinations
+        let mut counter = 1;
+        let mut check_dest = target_dest.clone();
+        while is_self_copy(&src_long, &check_dest) || planned_dests.contains(&check_dest) || check_dest.exists() {
             let stem = target_dest.file_stem().unwrap_or_default().to_string_lossy().into_owned();
             let ext = target_dest.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
-            let mut counter = 1;
-            loop {
-                let suffix = if counter == 1 {
-                    " - Copy".to_string()
-                } else {
-                    format!(" - Copy ({})", counter)
-                };
-                let new_name = format!("{}{}{}", stem, suffix, ext);
-                let new_path = dest_root_long.join(new_name);
-                if !new_path.exists() {
-                    target_dest = new_path;
-                    break;
-                }
-                counter += 1;
-            }
+            let suffix = if counter == 1 {
+                " - Copy".to_string()
+            } else {
+                format!(" - Copy ({})", counter)
+            };
+            let new_name = format!("{}{}{}", stem, suffix, ext);
+            check_dest = dest_root_long.join(new_name);
+            counter += 1;
         }
+        target_dest = check_dest;
+        planned_dests.insert(target_dest.clone());
         
         let src_wide = encode_wide_path(&src_long);
         let dest_wide = encode_wide_path(&target_dest);
@@ -340,5 +352,59 @@ pub fn build_delete_list(
     }
 
     Ok(delete_list)
+}
+
+pub fn get_file_identity(path: &Path) -> Option<(u32, u64)> {
+    let path_wide: Vec<u16> = path.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let handle = CreateFileW(
+            PCWSTR(path_wide.as_ptr()),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            None,
+        );
+        
+        if let Ok(h) = handle {
+            if h != INVALID_HANDLE_VALUE {
+                let mut info = BY_HANDLE_FILE_INFORMATION::default();
+                let res = GetFileInformationByHandle(h, &mut info);
+                let _ = CloseHandle(h);
+                if res.is_ok() {
+                    let file_index = ((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64);
+                    return Some((info.dwVolumeSerialNumber, file_index));
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn is_self_copy(src: &Path, dest: &Path) -> bool {
+    // 1. Compare volume serial and file index directly
+    if let (Some(src_id), Some(dest_id)) = (get_file_identity(src), get_file_identity(dest)) {
+        if src_id == dest_id {
+            return true;
+        }
+    }
+
+    // 2. Compare parent identities and filenames case-insensitively
+    if let (Some(src_parent), Some(dest_parent)) = (src.parent(), dest.parent()) {
+        if let (Some(src_p_id), Some(dest_p_id)) = (get_file_identity(src_parent), get_file_identity(dest_parent)) {
+            if src_p_id == dest_p_id {
+                if let (Some(src_name), Some(dest_name)) = (src.file_name(), dest.file_name()) {
+                    let src_str = src_name.to_string_lossy().to_lowercase();
+                    let dest_str = dest_name.to_string_lossy().to_lowercase();
+                    if src_str == dest_str {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
 }
 
