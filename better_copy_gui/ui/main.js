@@ -7,9 +7,21 @@ const appWindow = getCurrentWindow();
 let speedHistory = []; // Will store { percent: number, speed: number }
 let copyActive = false;
 let threadInterval = null;
+let animationFrameId = null;
 let lastGraphUpdateTime = 0;
 let currentPercent = 0;
 let isDelete = false;
+
+// HTML escaping helper to prevent XSS
+function escapeHtml(str) {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 // Helper to get file basename
 function getBasename(path) {
@@ -76,7 +88,7 @@ document.getElementById('error-close-btn').addEventListener('click', async () =>
 
 // Thread Visualization Animator
 function startThreadAnimation(concurrency) {
-  if (threadInterval) clearInterval(threadInterval);
+  stopThreadAnimation();
   
   const threadGrid = document.getElementById('thread-grid');
   if (threadGrid) {
@@ -89,26 +101,38 @@ function startThreadAnimation(concurrency) {
   }
 
   copyActive = true;
-  threadInterval = setInterval(() => {
+  let startTime = Date.now();
+
+  function animate() {
     if (!copyActive) return;
     const dots = document.querySelectorAll('.thread-dot');
     if (dots && dots.length > 0) {
-      dots.forEach((dot) => {
-        // Simulate thread active state
-        if (Math.random() > 0.35) {
+      const elapsed = (Date.now() - startTime) / 1000;
+      dots.forEach((dot, index) => {
+        // Compute a smooth wave phase
+        const wave = Math.sin(elapsed * 5 + index * 0.5);
+        // Map wave (-1 to 1) to opacity/brightness (0.2 to 1.0)
+        const opacity = 0.2 + (wave + 1) * 0.4;
+        dot.style.opacity = opacity;
+        if (opacity > 0.5) {
           dot.classList.add('active');
-          dot.style.opacity = Math.random() > 0.5 ? '1.0' : '0.7';
         } else {
           dot.classList.remove('active');
-          dot.style.opacity = '0.2';
         }
       });
     }
-  }, 100);
+    animationFrameId = requestAnimationFrame(animate);
+  }
+
+  animate();
 }
 
 function stopThreadAnimation() {
   copyActive = false;
+  if (animationFrameId) {
+    cancelAnimationFrame(animationFrameId);
+    animationFrameId = null;
+  }
   if (threadInterval) {
     clearInterval(threadInterval);
     threadInterval = null;
@@ -253,13 +277,13 @@ listen('copy-start', (event) => {
     item.className = 'job-item';
     if (isDelete) {
       item.innerHTML = `
-        <span style="font-weight: 500; color: #f87171; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 440px;" title="${src}">🗑️ Delete: ${getBasename(src)}</span>
+        <span style="font-weight: 500; color: #f87171; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 440px;" title="${escapeHtml(src)}">🗑️ Delete: ${escapeHtml(getBasename(src))}</span>
       `;
     } else {
       item.innerHTML = `
-        <span style="font-weight: 500; color: #f3f4f6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;" title="${src}">${getBasename(src)}</span>
+        <span style="font-weight: 500; color: #f3f4f6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;" title="${escapeHtml(src)}">${escapeHtml(getBasename(src))}</span>
         <span style="color: #6b7280; margin: 0 8px;">➔</span>
-        <span style="color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;" title="${destination}">${getBasename(destination)}</span>
+        <span style="color: #9ca3af; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px;" title="${escapeHtml(destination)}">${escapeHtml(getBasename(destination))}</span>
       `;
     }
     jobsList.appendChild(item);
@@ -331,7 +355,7 @@ listen('copy-complete', (event) => {
     failures.forEach(([path, err]) => {
       const p = document.createElement('div');
       p.style.marginBottom = '6px';
-      p.innerHTML = `<span style="color: #ef4444; font-weight: 500;">${getBasename(path)}</span>: ${err}`;
+      p.innerHTML = `<span style="color: #ef4444; font-weight: 500;">${escapeHtml(getBasename(path))}</span>: ${escapeHtml(err)}`;
       errorList.appendChild(p);
     });
     document.getElementById('error-overlay').style.display = 'flex';

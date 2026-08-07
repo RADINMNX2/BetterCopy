@@ -10,11 +10,10 @@ use std::time::{Duration, Instant};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, FILETIME};
 use windows::Win32::Storage::FileSystem::{
-    CopyFileExW, CreateFileW, MoveFileExW, ReadFile, SetFileTime, WriteFile,
-    SetFilePointerEx, SetEndOfFile, FILE_BEGIN,
-    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_SEQUENTIAL_SCAN, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, LPPROGRESS_ROUTINE_CALLBACK_REASON, MOVEFILE_COPY_ALLOWED,
-    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, OPEN_EXISTING,
+    CopyFileExW, CreateFileW, MoveFileExW, SetFileTime,
+    LPPROGRESS_ROUTINE_CALLBACK_REASON, MOVEFILE_COPY_ALLOWED,
+    MOVEFILE_WRITE_THROUGH, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS,
+    FILE_SHARE_READ, FILE_SHARE_WRITE,
 };
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard};
 use windows::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED};
@@ -24,6 +23,7 @@ use crate::walker::build_work_list;
 
 // Win32 copy flag constant
 const COPY_FILE_NO_BUFFERING: u32 = 0x00001000;
+const COPY_FILE_FAIL_IF_EXISTS: u32 = 0x00000001;
 
 /// Global progress tracking state
 pub struct ProgressState {
@@ -68,158 +68,7 @@ unsafe extern "system" fn copy_progress_routine(
     0 // PROGRESS_CONTINUE
 }
 
-/// Direct low-overhead file copy function implementing "One handle, all operations" rule
-/// with cached timestamps, single-pass reads for small files, and selective pre-allocation.
-fn copy_file_direct(
-    src_wide: &[u16],
-    dest_wide: &[u16],
-    buffer: &mut [u8],
-    size: u64,
-    creation_time: u64,
-    last_access_time: u64,
-    last_write_time: u64,
-    global_state: &ProgressState,
-) -> Result<(), String> {
-    unsafe {
-        // Open source file: read-only, sequential access
-        let src_handle = CreateFileW(
-            PCWSTR(src_wide.as_ptr()),
-            0x80000000, // GENERIC_READ
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            None,
-            OPEN_EXISTING,
-            FILE_FLAG_SEQUENTIAL_SCAN,
-            None,
-        );
-        let src_h = match src_handle {
-            Ok(h) if h != INVALID_HANDLE_VALUE => h,
-            _ => return Err("Failed to open source file".to_string()),
-        };
 
-        // Open destination file: write-only, sequential access, overwrite existing
-        let dest_handle = CreateFileW(
-            PCWSTR(dest_wide.as_ptr()),
-            0x40000000 | 0x00000100, // GENERIC_WRITE | WRITE_ATTRIBUTES
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            None,
-            CREATE_ALWAYS,
-            FILE_FLAG_SEQUENTIAL_SCAN | FILE_ATTRIBUTE_NORMAL,
-            None,
-        );
-        let dest_h = match dest_handle {
-            Ok(h) if h != INVALID_HANDLE_VALUE => h,
-            _ => {
-                let _ = CloseHandle(src_h);
-                return Err("Failed to create destination file".to_string());
-            }
-        };
-
-        // Pre-allocate file size only for larger files (>= 128KB) to avoid system call overhead on tiny files
-        if size >= 128 * 1024 {
-            if SetFilePointerEx(dest_h, size as i64, None, FILE_BEGIN).is_ok() {
-                let _ = SetEndOfFile(dest_h);
-                // Seek back to start
-                let _ = SetFilePointerEx(dest_h, 0, None, FILE_BEGIN);
-            }
-        }
-
-        if size > 0 {
-            if size <= buffer.len() as u64 {
-                // Single-pass read/write: avoids the redundant second ReadFile query loop
-                let mut bytes_read = 0u32;
-                let read_res = ReadFile(
-                    src_h,
-                    Some(buffer),
-                    Some(&mut bytes_read as *mut u32),
-                    None,
-                );
-
-                if read_res.is_ok() && bytes_read > 0 {
-                    let mut bytes_written = 0u32;
-                    let write_res = WriteFile(
-                        dest_h,
-                        Some(&buffer[..bytes_read as usize]),
-                        Some(&mut bytes_written as *mut u32),
-                        None,
-                    );
-
-                    if write_res.is_err() || bytes_written != bytes_read {
-                        let _ = CloseHandle(src_h);
-                        let _ = CloseHandle(dest_h);
-                        let _ = windows::Win32::Storage::FileSystem::DeleteFileW(PCWSTR(dest_wide.as_ptr()));
-                        return Err("Write failed".to_string());
-                    }
-                    global_state.bytes_completed.fetch_add(bytes_written as u64, Ordering::SeqCst);
-                }
-            } else {
-                // Multi-pass fallback for larger files
-                loop {
-                    if global_state.cancel_flag.load(Ordering::Relaxed) {
-                        let _ = CloseHandle(src_h);
-                        let _ = CloseHandle(dest_h);
-                        let _ = windows::Win32::Storage::FileSystem::DeleteFileW(PCWSTR(dest_wide.as_ptr()));
-                        return Err("Cancelled".to_string());
-                    }
-
-                    let mut bytes_read = 0u32;
-                    let read_res = ReadFile(
-                        src_h,
-                        Some(buffer),
-                        Some(&mut bytes_read as *mut u32),
-                        None,
-                    );
-
-                    if read_res.is_err() || bytes_read == 0 {
-                        break;
-                    }
-
-                    let mut bytes_written = 0u32;
-                    let write_res = WriteFile(
-                        dest_h,
-                        Some(&buffer[..bytes_read as usize]),
-                        Some(&mut bytes_written as *mut u32),
-                        None,
-                    );
-
-                    if write_res.is_err() || bytes_written != bytes_read {
-                        let _ = CloseHandle(src_h);
-                        let _ = CloseHandle(dest_h);
-                        let _ = windows::Win32::Storage::FileSystem::DeleteFileW(PCWSTR(dest_wide.as_ptr()));
-                        return Err("Write failed".to_string());
-                    }
-
-                    global_state.bytes_completed.fetch_add(bytes_written as u64, Ordering::SeqCst);
-                }
-            }
-        }
-
-        // Apply pre-cached timestamps directly, deleting the GetFileTime syscall
-        let ft_create = FILETIME {
-            dwLowDateTime: (creation_time & 0xFFFFFFFF) as u32,
-            dwHighDateTime: (creation_time >> 32) as u32,
-        };
-        let ft_access = FILETIME {
-            dwLowDateTime: (last_access_time & 0xFFFFFFFF) as u32,
-            dwHighDateTime: (last_access_time >> 32) as u32,
-        };
-        let ft_write = FILETIME {
-            dwLowDateTime: (last_write_time & 0xFFFFFFFF) as u32,
-            dwHighDateTime: (last_write_time >> 32) as u32,
-        };
-        let _ = SetFileTime(
-            dest_h,
-            Some(&ft_create),
-            Some(&ft_access),
-            Some(&ft_write),
-        );
-
-        let _ = CloseHandle(src_h);
-        let _ = CloseHandle(dest_h);
-
-        global_state.files_completed.fetch_add(1, Ordering::SeqCst);
-        Ok(())
-    }
-}
 
 /// Copy a single file using Win32 CopyFileExW with unbuffered write options for large files.
 fn copy_file_win32(
@@ -231,8 +80,8 @@ fn copy_file_win32(
     let src_wide: Vec<u16> = src.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
     let dest_wide: Vec<u16> = dest.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
 
-    // Large files (>= 256MB) bypass system file caching to prevent evicting the page cache.
-    let mut flags = 0u32;
+    // Fail if exists to prevent silent overwrite, and bypass caching for large files.
+    let mut flags = COPY_FILE_FAIL_IF_EXISTS;
     if size >= 256 * 1024 * 1024 {
         flags |= COPY_FILE_NO_BUFFERING;
     }
@@ -260,11 +109,54 @@ fn copy_file_win32(
             if global_state.cancel_flag.load(Ordering::Relaxed) {
                 Err("Cancelled".to_string())
             } else {
+                global_state.files_completed.fetch_add(1, Ordering::SeqCst);
                 Err(err)
             }
         }
     }
 }
+
+fn apply_directory_timestamps(dirs: &[crate::walker::CopyItem]) -> Result<(), String> {
+    for dir in dirs {
+        let dest_wide: Vec<u16> = dir.dest_path.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe {
+            let handle = CreateFileW(
+                PCWSTR(dest_wide.as_ptr()),
+                0x00000100, // WRITE_ATTRIBUTES
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS,
+                None,
+            );
+            if let Ok(h) = handle {
+                if h != INVALID_HANDLE_VALUE {
+                    let ft_create = FILETIME {
+                        dwLowDateTime: (dir.creation_time & 0xFFFFFFFF) as u32,
+                        dwHighDateTime: (dir.creation_time >> 32) as u32,
+                    };
+                    let ft_access = FILETIME {
+                        dwLowDateTime: (dir.last_access_time & 0xFFFFFFFF) as u32,
+                        dwHighDateTime: (dir.last_access_time >> 32) as u32,
+                    };
+                    let ft_write = FILETIME {
+                        dwLowDateTime: (dir.last_write_time & 0xFFFFFFFF) as u32,
+                        dwHighDateTime: (dir.last_write_time >> 32) as u32,
+                    };
+                    let _ = SetFileTime(
+                        h,
+                        Some(&ft_create),
+                        Some(&ft_access),
+                        Some(&ft_write),
+                    );
+                    let _ = CloseHandle(h);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 
 /// Helper to clear the Windows clipboard after a successful move operation.
 pub fn clear_clipboard() -> bool {
@@ -376,13 +268,21 @@ pub fn run_engine_with_work_list(
         failed_files: Arc::new(Mutex::new(Vec::new())),
     });
 
+    // Add preflight skipped links to failures
+    if !work_list.skipped_links.is_empty() {
+        let mut failed = global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner());
+        for (path, err) in &work_list.skipped_links {
+            failed.push((path.clone(), err.clone()));
+        }
+    }
+
     // 1. Recreate folder structure
     for dir in &work_list.dirs {
         if cancel_flag.load(Ordering::Relaxed) {
             break;
         }
         if let Err(e) = fs::create_dir_all(&dir.dest_path) {
-            global_state.failed_files.lock().unwrap().push((
+            global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((
                 dir.src_path.clone(),
                 format!("Failed to create directory {}: {}", dir.dest_path.display(), e),
             ));
@@ -432,14 +332,15 @@ pub fn run_engine_with_work_list(
                     let res = MoveFileExW(
                         PCWSTR(src_wide.as_ptr()),
                         PCWSTR(dest_wide.as_ptr()),
-                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED,
+                        MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED,
                     );
                     if res.is_ok() {
                         global_state.files_completed.fetch_add(1, Ordering::SeqCst);
                         global_state.bytes_completed.fetch_add(item.size, Ordering::SeqCst);
                     } else {
                         let err = res.err().map(|e| e.to_string()).unwrap_or_else(|| "Move error".to_string());
-                        global_state.failed_files.lock().unwrap().push((item.src_path.clone(), err));
+                        global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), err));
+                        global_state.files_completed.fetch_add(1, Ordering::SeqCst);
                     }
                 }
             }
@@ -455,14 +356,15 @@ pub fn run_engine_with_work_list(
                 let res = MoveFileExW(
                     PCWSTR(src_wide.as_ptr()),
                     PCWSTR(dest_wide.as_ptr()),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED,
+                    MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED,
                 );
                 if res.is_ok() {
                     global_state.files_completed.fetch_add(1, Ordering::SeqCst);
                     global_state.bytes_completed.fetch_add(item.size, Ordering::SeqCst);
                 } else {
                     let err = res.err().map(|e| e.to_string()).unwrap_or_else(|| "Move error".to_string());
-                    global_state.failed_files.lock().unwrap().push((item.src_path.clone(), err));
+                    global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), err));
+                    global_state.files_completed.fetch_add(1, Ordering::SeqCst);
                 }
             }
         }
@@ -471,116 +373,161 @@ pub fn run_engine_with_work_list(
         let small_idx = Arc::new(AtomicUsize::new(0));
         let large_idx = Arc::new(AtomicUsize::new(0));
 
+        let done_flag = Arc::new(AtomicBool::new(false));
+        let done_flag_clone = done_flag.clone();
+
         // Spawn progress reporting side-thread
         let progress_state = global_state.clone();
         let progress_cancel = cancel_flag.clone();
         let progress_handle = thread::spawn(move || {
-            while !progress_cancel.load(Ordering::Relaxed) {
+            while !progress_cancel.load(Ordering::Relaxed) && !done_flag_clone.load(Ordering::Relaxed) {
                 let completed = progress_state.files_completed.load(Ordering::Relaxed);
                 let bytes = progress_state.bytes_completed.load(Ordering::Relaxed);
                 if let Some(ref cb) = progress_callback {
                     cb(completed, bytes);
                 }
                 thread::sleep(Duration::from_millis(100));
-                if completed >= progress_state.total_files {
-                    break;
-                }
+            }
+            // Send one last progress update when done/cancelled
+            let completed = progress_state.files_completed.load(Ordering::Relaxed);
+            let bytes = progress_state.bytes_completed.load(Ordering::Relaxed);
+            if let Some(ref cb) = progress_callback {
+                cb(completed, bytes);
             }
         });
 
-        // 1. Large-file pool: Capped at min(2, concurrency) workers to prevent I/O seek contention
-        let large_workers = std::cmp::min(2, concurrency);
-        let mut large_threads = Vec::new();
-        for _ in 0..large_workers {
-            let idx = large_idx.clone();
-            let items = large_items.clone();
-            let state = global_state.clone();
-            let c_flag = cancel_flag.clone();
-
-            large_threads.push(thread::spawn(move || {
-                loop {
-                    if c_flag.load(Ordering::Relaxed) {
+        if concurrency == 1 {
+            // HDD Profile / single-thread: copy all files completely sequentially on the main thread
+            // to eliminate concurrent disk head seeks.
+            for item in large_items.iter() {
+                if cancel_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+                if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &global_state) {
+                    global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), e));
+                }
+            }
+            for dir in small_dirs.iter() {
+                for item in dir {
+                    if cancel_flag.load(Ordering::Relaxed) {
                         break;
                     }
-                    let current = idx.fetch_add(1, Ordering::SeqCst);
-                    if current >= items.len() {
-                        break;
-                    }
-                    let item = &items[current];
-                    if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &state) {
-                        state.failed_files.lock().unwrap().push((item.src_path.clone(), e));
+                    if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &global_state) {
+                        global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), e));
                     }
                 }
-            }));
-        }
+            }
+        } else {
+            // 1. Large-file pool: Capped at min(2, concurrency) workers to prevent I/O seek contention
+            let large_workers = std::cmp::min(2, concurrency);
+            let mut large_threads = Vec::new();
+            for _ in 0..large_workers {
+                let idx = large_idx.clone();
+                let items = large_items.clone();
+                let state = global_state.clone();
+                let c_flag = cancel_flag.clone();
 
-        // 2. Small-file pool: sharded by directory to prevent NTFS index lock contention
-        let mut small_threads = Vec::new();
-        for _ in 0..concurrency {
-            let idx = small_idx.clone();
-            let dirs = small_dirs.clone();
-            let state = global_state.clone();
-            let c_flag = cancel_flag.clone();
-
-            small_threads.push(thread::spawn(move || {
-                let mut buffer = vec![0u8; 64 * 1024];
-                loop {
-                    if c_flag.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let current = idx.fetch_add(1, Ordering::SeqCst);
-                    if current >= dirs.len() {
-                        break;
-                    }
-                    let items = &dirs[current];
-                    for item in items {
+                large_threads.push(thread::spawn(move || {
+                    loop {
                         if c_flag.load(Ordering::Relaxed) {
                             break;
                         }
-                        if let Err(e) = copy_file_direct(
-                            &item.src_wide,
-                            &item.dest_wide,
-                            &mut buffer,
-                            item.size,
-                            item.creation_time,
-                            item.last_access_time,
-                            item.last_write_time,
-                            &state,
-                        ) {
-                            state.failed_files.lock().unwrap().push((item.src_path.clone(), e));
+                        let current = idx.fetch_add(1, Ordering::SeqCst);
+                        if current >= items.len() {
+                            break;
+                        }
+                        let item = &items[current];
+                        if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &state) {
+                            state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), e));
                         }
                     }
-                }
-            }));
-        }
+                }));
+            }
 
-        // Wait for workers to complete
-        for t in large_threads {
-            let _ = t.join();
-        }
-        for t in small_threads {
-            let _ = t.join();
-        }
+            // 2. Small-file pool: sharded by directory to prevent NTFS index lock contention
+            let mut small_threads = Vec::new();
+            for _ in 0..concurrency {
+                let idx = small_idx.clone();
+                let dirs = small_dirs.clone();
+                let state = global_state.clone();
+                let c_flag = cancel_flag.clone();
 
+                small_threads.push(thread::spawn(move || {
+                    loop {
+                        if c_flag.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        let current = idx.fetch_add(1, Ordering::SeqCst);
+                        if current >= dirs.len() {
+                            break;
+                        }
+                        let items = &dirs[current];
+                        for item in items {
+                            if c_flag.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &state) {
+                                state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), e));
+                            }
+                        }
+                    }
+                }));
+            }
+
+            // Wait for workers to complete
+            for t in large_threads {
+                let _ = t.join();
+            }
+            for t in small_threads {
+                let _ = t.join();
+            }
+        }
+        done_flag.store(true, Ordering::Relaxed);
         let _ = progress_handle.join();
     }
 
+    // Post-copy pass: Apply original directory timestamps
+    let _ = apply_directory_timestamps(&work_list.dirs);
+
     // Two-Phase Move: Delete sources ONLY if everything copied without errors
-    let mut failures = global_state.failed_files.lock().unwrap().clone();
+    let mut failures = global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let was_cancelled = cancel_flag.load(Ordering::Relaxed);
 
-    if is_move && failures.is_empty() && !was_cancelled {
-        // Delete all small and large source files
-        for dir in small_dirs.iter() {
-            for file in dir {
-                if let Err(e) = fs::remove_file(&file.src_path) {
-                    failures.push((file.src_path.clone(), format!("Move cleanup failed: {}", e)));
+    if is_move && !was_cancelled {
+        // Delete all small and large source files (unless same volume move)
+        if !is_same_volume {
+            for dir in small_dirs.iter() {
+                for file in dir {
+                    // Verification check: verify destination existence and size
+                    let mut success = false;
+                    if let Ok(dest_meta) = fs::metadata(&file.dest_path) {
+                        if dest_meta.len() == file.size {
+                            success = true;
+                        }
+                    }
+                    if success {
+                        if let Err(e) = fs::remove_file(&file.src_path) {
+                            failures.push((file.src_path.clone(), format!("Move cleanup failed: {}", e)));
+                        }
+                    } else {
+                        failures.push((file.src_path.clone(), "Move verification failed: destination file mismatch or missing".to_string()));
+                    }
                 }
             }
-        }
-        for file in large_items.iter() {
-            if let Err(e) = fs::remove_file(&file.src_path) {
-                failures.push((file.src_path.clone(), format!("Move cleanup failed: {}", e)));
+            for file in large_items.iter() {
+                let mut success = false;
+                if let Ok(dest_meta) = fs::metadata(&file.dest_path) {
+                    if dest_meta.len() == file.size {
+                        success = true;
+                    }
+                }
+                if success {
+                    if let Err(e) = fs::remove_file(&file.src_path) {
+                        failures.push((file.src_path.clone(), format!("Move cleanup failed: {}", e)));
+                    }
+                } else {
+                    failures.push((file.src_path.clone(), "Move verification failed: destination file mismatch or missing".to_string()));
+                }
             }
         }
         // Delete source directories in reverse depth-first order
@@ -590,8 +537,10 @@ pub fn run_engine_with_work_list(
             let _ = fs::remove_dir(&dir.src_path); // Ignore failure if directories are not empty
         }
 
-        // Clear clipboard to match Windows cut convention
-        let _ = clear_clipboard();
+        // Clear clipboard ONLY if everything succeeded
+        if failures.is_empty() {
+            let _ = clear_clipboard();
+        }
     }
 
     // Restore sleep states
@@ -599,8 +548,12 @@ pub fn run_engine_with_work_list(
         let _ = SetThreadExecutionState(ES_CONTINUOUS);
     }
 
+    let completed = global_state.files_completed.load(Ordering::Relaxed);
+    let total_failed = failures.len();
+    let files_copied = if completed >= total_failed { completed - total_failed } else { 0 };
+
     EngineSummary {
-        files_copied: global_state.files_completed.load(Ordering::Relaxed),
+        files_copied,
         bytes_copied: global_state.bytes_completed.load(Ordering::Relaxed),
         elapsed: start_time.elapsed(),
         failures,
@@ -683,19 +636,23 @@ pub fn run_delete_engine_with_delete_list(
         let files = Arc::new(delete_list.files);
         let file_idx = Arc::new(AtomicUsize::new(0));
 
+        let done_flag = Arc::new(AtomicBool::new(false));
+        let done_flag_clone = done_flag.clone();
+
         // Spawn progress reporting side-thread
         let progress_state = global_state.clone();
         let progress_cancel = cancel_flag.clone();
         let progress_handle = thread::spawn(move || {
-            while !progress_cancel.load(Ordering::Relaxed) {
+            while !progress_cancel.load(Ordering::Relaxed) && !done_flag_clone.load(Ordering::Relaxed) {
                 let completed = progress_state.files_completed.load(Ordering::Relaxed);
                 if let Some(ref cb) = progress_callback {
                     cb(completed, completed as u64);
                 }
                 thread::sleep(Duration::from_millis(100));
-                if completed >= progress_state.total_files {
-                    break;
-                }
+            }
+            let completed = progress_state.files_completed.load(Ordering::Relaxed);
+            if let Some(ref cb) = progress_callback {
+                cb(completed, completed as u64);
             }
         });
 
@@ -726,7 +683,7 @@ pub fn run_delete_engine_with_delete_list(
                     };
                     
                     if let Err(e) = res {
-                        state.failed_files.lock().unwrap().push((path.clone(), e.to_string()));
+                        state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((path.clone(), e.to_string()));
                     }
                     
                     state.files_completed.fetch_add(1, Ordering::SeqCst);
@@ -738,6 +695,7 @@ pub fn run_delete_engine_with_delete_list(
         for t in threads {
             let _ = t.join();
         }
+        done_flag.store(true, Ordering::Relaxed);
         let _ = progress_handle.join();
     }
 
@@ -756,7 +714,7 @@ pub fn run_delete_engine_with_delete_list(
     }
 
     // Merge failures
-    let mut worker_failures = global_state.failed_files.lock().unwrap().clone();
+    let mut worker_failures = global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).clone();
     failures.append(&mut worker_failures);
 
     // Restore sleep states
@@ -764,9 +722,13 @@ pub fn run_delete_engine_with_delete_list(
         let _ = SetThreadExecutionState(ES_CONTINUOUS);
     }
 
+    let completed = global_state.files_completed.load(Ordering::Relaxed);
+    let total_failed = failures.len();
+    let files_copied = if completed >= total_failed { completed - total_failed } else { 0 };
+
     EngineSummary {
-        files_copied: global_state.files_completed.load(Ordering::Relaxed),
-        bytes_copied: global_state.files_completed.load(Ordering::Relaxed) as u64,
+        files_copied,
+        bytes_copied: files_copied as u64,
         elapsed: start_time.elapsed(),
         failures,
         was_cancelled,

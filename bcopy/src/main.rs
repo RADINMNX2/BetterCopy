@@ -10,8 +10,11 @@ use better_copy_core::engine::run_engine;
 fn generate_fixture(dest: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dest)?;
     
-    // 8 KB buffer of zeroes
-    let buffer = vec![0u8; 8192];
+    // 8 KB buffer of non-zero pseudo-random bytes to prevent compression / zero-detection optimizations
+    let mut buffer = vec![0u8; 8192];
+    for (i, byte) in buffer.iter_mut().enumerate() {
+        *byte = ((i % 255) + 1) as u8;
+    }
     
     for d in 0..500 {
         let dir_path = dest.join(format!("dir_{}", d));
@@ -66,10 +69,20 @@ fn main() {
         }
         i += 1;
     }
+
+    // Parse verbs: check if first positional is "copy" or "move"
+    if !positionals.is_empty() {
+        if positionals[0] == "copy" {
+            positionals.remove(0);
+        } else if positionals[0] == "move" {
+            is_move = true;
+            positionals.remove(0);
+        }
+    }
     
     if positionals.len() < 2 {
         eprintln!("Error: Missing source paths or destination path.");
-        eprintln!("Usage: bcopy [--move] [--threads N] <sources...> <destination>");
+        eprintln!("Usage: bcopy [copy|move] [--threads N] <sources...> <destination>");
         std::process::exit(1);
     }
     
@@ -116,5 +129,10 @@ fn main() {
         for (path, err) in &summary.failures {
             eprintln!("  - {}: {}", path.display(), err);
         }
+        std::process::exit(1);
+    } else if summary.was_cancelled {
+        std::process::exit(130);
+    } else {
+        std::process::exit(0);
     }
 }

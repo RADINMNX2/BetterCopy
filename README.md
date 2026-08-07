@@ -71,15 +71,15 @@ We benchmarked BetterCopy against Microsoft's industry-standard `robocopy` using
 
 | Copy Engine | Commands / Options | Average Time (s) | Speedup vs. Best Robocopy |
 | :--- | :--- | :--- | :--- |
-| **BetterCopy (`bcopy`)** | Default (Auto-Tuned) | **20.19s** | **1.65x faster** (Baseline) |
-| **Robocopy** | `/MT:32` (Threads) | 33.29s | 1.00x |
-| **Robocopy** | `/MT:32 /J` (Unbuffered) | 35.80s | 0.93x |
-| **Windows Explorer** | Defender Disabled (Manual) | 240s - 300s (4m - 5m) | 0.11x - 0.14x (8x - 9x slower) |
+| **BetterCopy (`bcopy`)** | Default (Auto-Tuned) | **21.71s** | **1.63x faster** (Baseline) |
+| **Robocopy** | `/MT:32` (Threads) | 35.43s | 1.00x |
+| **Robocopy** | `/MT:32 /J` (Unbuffered) | 38.39s | 0.92x |
+| **Windows Explorer** | Defender Enabled (Manual) | 240s - 300s (4m - 5m) | 0.12x - 0.15x (7x - 8x slower) |
 
-*BetterCopy achieves a **64.9% throughput improvement** over the fastest possible Robocopy configuration, and is **12x to 15x faster** than native Windows Explorer (with Defender disabled) when copying tiny files on NVMe drives.*
+*BetterCopy achieves a **63.2% throughput improvement** over the fastest possible Robocopy configuration, and is **11x to 14x faster** than native Windows Explorer when copying tiny files on NVMe drives with Windows Defender fully active.*
 
 > [!WARNING]
-> **Benchmarking Disclaimer (n=1):** All benchmark results were collected in a single test environment (n=1) on a **Micron MTFDKBA1T0TFH** NVMe SSD with Windows Defender disabled. Actual performance will vary depending on your drive controller, thermal limits, filesystem overhead, and antivirus active scanning configuration.
+> **Benchmarking Disclaimer (n=1):** All benchmark results were collected in a single test environment (n=1) on a **SKHynix_HFS001TEM4X182N** NVMe SSD with Windows Defender enabled. Actual performance will vary depending on your drive controller, thermal limits, filesystem overhead, and antivirus active scanning configuration.
 
 ---
 

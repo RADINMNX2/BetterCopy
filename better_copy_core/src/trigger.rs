@@ -235,8 +235,10 @@ fn get_paths_from_browser(web_browser: &IWebBrowserApp) -> Result<Vec<PathBuf>, 
         let folder_view: IFolderView2 = shell_view.cast()
             .map_err(|e| format!("Cast to IFolderView2 failed: {}", e))?;
             
-        let selection: IShellItemArray = folder_view.GetSelection(true)
-            .map_err(|e| format!("GetSelection failed: {}", e))?;
+        let selection: IShellItemArray = match folder_view.GetSelection(false) {
+            Ok(sel) => sel,
+            Err(_) => return Ok(Vec::new()),
+        };
             
         let count = selection.GetCount()
             .map_err(|e| format!("GetCount failed: {}", e))?;
@@ -408,31 +410,11 @@ fn replay_hotkey(hwnd: HWND, hotkey_id: i32) {
             return;
         };
         
-        let mut inputs = [INPUT::default(); 6];
-        
-        // Ctrl Down
-        inputs[0].r#type = INPUT_KEYBOARD;
-        inputs[0].Anonymous.ki = KEYBDINPUT {
-            wVk: VIRTUAL_KEY(0x11), // VK_CONTROL
-            wScan: 0,
-            dwFlags: KEYBD_EVENT_FLAGS(0),
-            time: 0,
-            dwExtraInfo: 0,
-        };
-        
-        // Shift Down
-        inputs[1].r#type = INPUT_KEYBOARD;
-        inputs[1].Anonymous.ki = KEYBDINPUT {
-            wVk: VIRTUAL_KEY(0x10), // VK_SHIFT
-            wScan: 0,
-            dwFlags: KEYBD_EVENT_FLAGS(0),
-            time: 0,
-            dwExtraInfo: 0,
-        };
+        let mut inputs = [INPUT::default(); 2];
         
         // Key Down
-        inputs[2].r#type = INPUT_KEYBOARD;
-        inputs[2].Anonymous.ki = KEYBDINPUT {
+        inputs[0].r#type = INPUT_KEYBOARD;
+        inputs[0].Anonymous.ki = KEYBDINPUT {
             wVk: VIRTUAL_KEY(vk),
             wScan: 0,
             dwFlags: KEYBD_EVENT_FLAGS(0),
@@ -441,29 +423,9 @@ fn replay_hotkey(hwnd: HWND, hotkey_id: i32) {
         };
         
         // Key Up
-        inputs[3].r#type = INPUT_KEYBOARD;
-        inputs[3].Anonymous.ki = KEYBDINPUT {
+        inputs[1].r#type = INPUT_KEYBOARD;
+        inputs[1].Anonymous.ki = KEYBDINPUT {
             wVk: VIRTUAL_KEY(vk),
-            wScan: 0,
-            dwFlags: KEYBD_EVENT_FLAGS(2), // KEYEVENTF_KEYUP
-            time: 0,
-            dwExtraInfo: 0,
-        };
-        
-        // Shift Up
-        inputs[4].r#type = INPUT_KEYBOARD;
-        inputs[4].Anonymous.ki = KEYBDINPUT {
-            wVk: VIRTUAL_KEY(0x10),
-            wScan: 0,
-            dwFlags: KEYBD_EVENT_FLAGS(2), // KEYEVENTF_KEYUP
-            time: 0,
-            dwExtraInfo: 0,
-        };
-        
-        // Ctrl Up
-        inputs[5].r#type = INPUT_KEYBOARD;
-        inputs[5].Anonymous.ki = KEYBDINPUT {
-            wVk: VIRTUAL_KEY(0x11),
             wScan: 0,
             dwFlags: KEYBD_EVENT_FLAGS(2), // KEYEVENTF_KEYUP
             time: 0,
@@ -486,19 +448,21 @@ unsafe extern "system" fn win_event_proc(
     _dw_event_thread: u32,
     _dwms_event_time: u32,
 ) {
-    unsafe {
-        WINDOW_HWND.with(|w_hwnd| {
-            let hwnd = w_hwnd.get();
-            if !hwnd.0.is_null() {
-                let fg = GetForegroundWindow();
-                let mut class_name = [0u16; 256];
-                let len = GetClassNameW(fg, &mut class_name);
-                let class_str = String::from_utf16_lossy(&class_name[..len as usize]);
-                println!("[Trigger] Focus shifted to window class: {}", class_str);
-                update_hotkey_registration(hwnd, false);
-            }
-        });
-    }
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        unsafe {
+            WINDOW_HWND.with(|w_hwnd| {
+                let hwnd = w_hwnd.get();
+                if !hwnd.0.is_null() {
+                    let fg = GetForegroundWindow();
+                    let mut class_name = [0u16; 256];
+                    let len = GetClassNameW(fg, &mut class_name);
+                    let class_str = String::from_utf16_lossy(&class_name[..len as usize]);
+                    println!("[Trigger] Focus shifted to window class: {}", class_str);
+                    update_hotkey_registration(hwnd, false);
+                }
+            });
+        }
+    }));
 }
 
 /// Window procedure for the message-only trigger window.
@@ -508,31 +472,35 @@ unsafe extern "system" fn trigger_window_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    unsafe {
-        match msg {
-            WM_HOTKEY => {
-                println!("[Trigger] WM_HOTKEY message received by window!");
-                let hotkey_id = wparam.0 as i32;
-                let fg = GetForegroundWindow();
-                if check_rename_box_focus(fg) {
-                    println!("[Trigger] Focus is inside a rename/edit box, replaying native keys.");
-                    replay_hotkey(hwnd, hotkey_id);
-                } else {
-                    if let Some(cb_mutex) = TRIGGER_CALLBACK.get() {
-                        if let Some(cb) = cb_mutex.lock().unwrap().as_ref() {
-                            cb(hotkey_id);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        unsafe {
+            match msg {
+                WM_HOTKEY => {
+                    println!("[Trigger] WM_HOTKEY message received by window!");
+                    let hotkey_id = wparam.0 as i32;
+                    let fg = GetForegroundWindow();
+                    if check_rename_box_focus(fg) {
+                        println!("[Trigger] Focus is inside a rename/edit box, replaying native keys.");
+                        replay_hotkey(hwnd, hotkey_id);
+                    } else {
+                        if let Some(cb_mutex) = TRIGGER_CALLBACK.get() {
+                            let guard = cb_mutex.lock().unwrap_or_else(|e| e.into_inner());
+                            if let Some(cb) = guard.as_ref() {
+                                cb(hotkey_id);
+                            }
                         }
                     }
+                    LRESULT(0)
                 }
-                LRESULT(0)
+                MSG_RE_REGISTER => {
+                    update_hotkey_registration(hwnd, false);
+                    LRESULT(0)
+                }
+                _ => DefWindowProcW(hwnd, msg, wparam, lparam),
             }
-            MSG_RE_REGISTER => {
-                update_hotkey_registration(hwnd, false);
-                LRESULT(0)
-            }
-            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
         }
-    }
+    }));
+    result.unwrap_or(LRESULT(0))
 }
 
 // Global thread-safe slot to hold trigger callback.
@@ -593,7 +561,7 @@ impl HotkeyTrigger {
         };
         
         let cb_mutex = TRIGGER_CALLBACK.get_or_init(|| Mutex::new(None));
-        *cb_mutex.lock().unwrap() = Some(Box::new(wrapped_cb));
+        *cb_mutex.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(wrapped_cb));
 
         let thread_handle = thread::spawn(move || {
             unsafe {
@@ -703,7 +671,7 @@ impl Drop for HotkeyTrigger {
             let _ = t.join();
         }
         if let Some(cb_mutex) = TRIGGER_CALLBACK.get() {
-            *cb_mutex.lock().unwrap() = None;
+            *cb_mutex.lock().unwrap_or_else(|e| e.into_inner()) = None;
         }
     }
 }
