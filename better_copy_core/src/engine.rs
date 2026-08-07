@@ -22,6 +22,7 @@ use crate::walker::build_work_list;
 
 // Win32 copy flag constant
 const COPY_FILE_NO_BUFFERING: u32 = 0x00001000;
+const COPY_FILE_FAIL_IF_EXISTS: u32 = 0x00000001;
 
 /// Global progress tracking state
 pub struct ProgressState {
@@ -78,8 +79,8 @@ fn copy_file_win32(
     let src_wide: Vec<u16> = src.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
     let dest_wide: Vec<u16> = dest.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
 
-    // Large files (>= 256MB) bypass system file caching to prevent evicting the page cache.
-    let mut flags = 0u32;
+    // Fail if exists to prevent silent overwrite, and bypass caching for large files.
+    let mut flags = COPY_FILE_FAIL_IF_EXISTS;
     if size >= 256 * 1024 * 1024 {
         flags |= COPY_FILE_NO_BUFFERING;
     }
@@ -107,6 +108,7 @@ fn copy_file_win32(
             if global_state.cancel_flag.load(Ordering::Relaxed) {
                 Err("Cancelled".to_string())
             } else {
+                global_state.files_completed.fetch_add(1, Ordering::SeqCst);
                 Err(err)
             }
         }
@@ -279,14 +281,15 @@ pub fn run_engine_with_work_list(
                     let res = MoveFileExW(
                         PCWSTR(src_wide.as_ptr()),
                         PCWSTR(dest_wide.as_ptr()),
-                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED,
+                        MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED,
                     );
                     if res.is_ok() {
                         global_state.files_completed.fetch_add(1, Ordering::SeqCst);
                         global_state.bytes_completed.fetch_add(item.size, Ordering::SeqCst);
                     } else {
                         let err = res.err().map(|e| e.to_string()).unwrap_or_else(|| "Move error".to_string());
-                        global_state.failed_files.lock().unwrap().push((item.src_path.clone(), err));
+                        global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), err));
+                        global_state.files_completed.fetch_add(1, Ordering::SeqCst);
                     }
                 }
             }
@@ -302,14 +305,15 @@ pub fn run_engine_with_work_list(
                 let res = MoveFileExW(
                     PCWSTR(src_wide.as_ptr()),
                     PCWSTR(dest_wide.as_ptr()),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED,
+                    MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED,
                 );
                 if res.is_ok() {
                     global_state.files_completed.fetch_add(1, Ordering::SeqCst);
                     global_state.bytes_completed.fetch_add(item.size, Ordering::SeqCst);
                 } else {
                     let err = res.err().map(|e| e.to_string()).unwrap_or_else(|| "Move error".to_string());
-                    global_state.failed_files.lock().unwrap().push((item.src_path.clone(), err));
+                    global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), err));
+                    global_state.files_completed.fetch_add(1, Ordering::SeqCst);
                 }
             }
         }
@@ -318,20 +322,26 @@ pub fn run_engine_with_work_list(
         let small_idx = Arc::new(AtomicUsize::new(0));
         let large_idx = Arc::new(AtomicUsize::new(0));
 
+        let done_flag = Arc::new(AtomicBool::new(false));
+        let done_flag_clone = done_flag.clone();
+
         // Spawn progress reporting side-thread
         let progress_state = global_state.clone();
         let progress_cancel = cancel_flag.clone();
         let progress_handle = thread::spawn(move || {
-            while !progress_cancel.load(Ordering::Relaxed) {
+            while !progress_cancel.load(Ordering::Relaxed) && !done_flag_clone.load(Ordering::Relaxed) {
                 let completed = progress_state.files_completed.load(Ordering::Relaxed);
                 let bytes = progress_state.bytes_completed.load(Ordering::Relaxed);
                 if let Some(ref cb) = progress_callback {
                     cb(completed, bytes);
                 }
                 thread::sleep(Duration::from_millis(100));
-                if completed >= progress_state.total_files {
-                    break;
-                }
+            }
+            // Send one last progress update when done/cancelled
+            let completed = progress_state.files_completed.load(Ordering::Relaxed);
+            let bytes = progress_state.bytes_completed.load(Ordering::Relaxed);
+            if let Some(ref cb) = progress_callback {
+                cb(completed, bytes);
             }
         });
 
@@ -355,7 +365,7 @@ pub fn run_engine_with_work_list(
                     }
                     let item = &items[current];
                     if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &state) {
-                        state.failed_files.lock().unwrap().push((item.src_path.clone(), e));
+                        state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), e));
                     }
                 }
             }));
@@ -398,26 +408,49 @@ pub fn run_engine_with_work_list(
         for t in small_threads {
             let _ = t.join();
         }
-
+        done_flag.store(true, Ordering::Relaxed);
         let _ = progress_handle.join();
     }
 
     // Two-Phase Move: Delete sources ONLY if everything copied without errors
-    let mut failures = global_state.failed_files.lock().unwrap().clone();
+    let mut failures = global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let was_cancelled = cancel_flag.load(Ordering::Relaxed);
 
-    if is_move && failures.is_empty() && !was_cancelled {
-        // Delete all small and large source files
-        for dir in small_dirs.iter() {
-            for file in dir {
-                if let Err(e) = fs::remove_file(&file.src_path) {
-                    failures.push((file.src_path.clone(), format!("Move cleanup failed: {}", e)));
+    if is_move && !was_cancelled {
+        // Delete all small and large source files (unless same volume move)
+        if !is_same_volume {
+            for dir in small_dirs.iter() {
+                for file in dir {
+                    // Verification check: verify destination existence and size
+                    let mut success = false;
+                    if let Ok(dest_meta) = fs::metadata(&file.dest_path) {
+                        if dest_meta.len() == file.size {
+                            success = true;
+                        }
+                    }
+                    if success {
+                        if let Err(e) = fs::remove_file(&file.src_path) {
+                            failures.push((file.src_path.clone(), format!("Move cleanup failed: {}", e)));
+                        }
+                    } else {
+                        failures.push((file.src_path.clone(), "Move verification failed: destination file mismatch or missing".to_string()));
+                    }
                 }
             }
-        }
-        for file in large_items.iter() {
-            if let Err(e) = fs::remove_file(&file.src_path) {
-                failures.push((file.src_path.clone(), format!("Move cleanup failed: {}", e)));
+            for file in large_items.iter() {
+                let mut success = false;
+                if let Ok(dest_meta) = fs::metadata(&file.dest_path) {
+                    if dest_meta.len() == file.size {
+                        success = true;
+                    }
+                }
+                if success {
+                    if let Err(e) = fs::remove_file(&file.src_path) {
+                        failures.push((file.src_path.clone(), format!("Move cleanup failed: {}", e)));
+                    }
+                } else {
+                    failures.push((file.src_path.clone(), "Move verification failed: destination file mismatch or missing".to_string()));
+                }
             }
         }
         // Delete source directories in reverse depth-first order
@@ -427,8 +460,10 @@ pub fn run_engine_with_work_list(
             let _ = fs::remove_dir(&dir.src_path); // Ignore failure if directories are not empty
         }
 
-        // Clear clipboard to match Windows cut convention
-        let _ = clear_clipboard();
+        // Clear clipboard ONLY if everything succeeded
+        if failures.is_empty() {
+            let _ = clear_clipboard();
+        }
     }
 
     // Restore sleep states
@@ -436,8 +471,12 @@ pub fn run_engine_with_work_list(
         let _ = SetThreadExecutionState(ES_CONTINUOUS);
     }
 
+    let completed = global_state.files_completed.load(Ordering::Relaxed);
+    let total_failed = failures.len();
+    let files_copied = if completed >= total_failed { completed - total_failed } else { 0 };
+
     EngineSummary {
-        files_copied: global_state.files_completed.load(Ordering::Relaxed),
+        files_copied,
         bytes_copied: global_state.bytes_completed.load(Ordering::Relaxed),
         elapsed: start_time.elapsed(),
         failures,
@@ -520,19 +559,23 @@ pub fn run_delete_engine_with_delete_list(
         let files = Arc::new(delete_list.files);
         let file_idx = Arc::new(AtomicUsize::new(0));
 
+        let done_flag = Arc::new(AtomicBool::new(false));
+        let done_flag_clone = done_flag.clone();
+
         // Spawn progress reporting side-thread
         let progress_state = global_state.clone();
         let progress_cancel = cancel_flag.clone();
         let progress_handle = thread::spawn(move || {
-            while !progress_cancel.load(Ordering::Relaxed) {
+            while !progress_cancel.load(Ordering::Relaxed) && !done_flag_clone.load(Ordering::Relaxed) {
                 let completed = progress_state.files_completed.load(Ordering::Relaxed);
                 if let Some(ref cb) = progress_callback {
                     cb(completed, completed as u64);
                 }
                 thread::sleep(Duration::from_millis(100));
-                if completed >= progress_state.total_files {
-                    break;
-                }
+            }
+            let completed = progress_state.files_completed.load(Ordering::Relaxed);
+            if let Some(ref cb) = progress_callback {
+                cb(completed, completed as u64);
             }
         });
 
@@ -563,7 +606,7 @@ pub fn run_delete_engine_with_delete_list(
                     };
                     
                     if let Err(e) = res {
-                        state.failed_files.lock().unwrap().push((path.clone(), e.to_string()));
+                        state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((path.clone(), e.to_string()));
                     }
                     
                     state.files_completed.fetch_add(1, Ordering::SeqCst);
@@ -575,6 +618,7 @@ pub fn run_delete_engine_with_delete_list(
         for t in threads {
             let _ = t.join();
         }
+        done_flag.store(true, Ordering::Relaxed);
         let _ = progress_handle.join();
     }
 
@@ -593,7 +637,7 @@ pub fn run_delete_engine_with_delete_list(
     }
 
     // Merge failures
-    let mut worker_failures = global_state.failed_files.lock().unwrap().clone();
+    let mut worker_failures = global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).clone();
     failures.append(&mut worker_failures);
 
     // Restore sleep states
@@ -601,9 +645,13 @@ pub fn run_delete_engine_with_delete_list(
         let _ = SetThreadExecutionState(ES_CONTINUOUS);
     }
 
+    let completed = global_state.files_completed.load(Ordering::Relaxed);
+    let total_failed = failures.len();
+    let files_copied = if completed >= total_failed { completed - total_failed } else { 0 };
+
     EngineSummary {
-        files_copied: global_state.files_completed.load(Ordering::Relaxed),
-        bytes_copied: global_state.files_completed.load(Ordering::Relaxed) as u64,
+        files_copied,
+        bytes_copied: files_copied as u64,
         elapsed: start_time.elapsed(),
         failures,
         was_cancelled,
