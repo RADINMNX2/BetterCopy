@@ -2,6 +2,5 @@
 /bench/fixtures/
 /bench/results/
 /bench/dest/
-Cargo.lock
 .tauri
 dist
