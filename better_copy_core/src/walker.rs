@@ -136,7 +136,7 @@ fn walk_dir(
                 cb(work_list.total_files);
             }
 
-            if size < 1_000_000 {
+            if size < 1_048_576 {
                 work_list.small_files.push(item);
             } else {
                 work_list.large_files.push(item);
@@ -240,7 +240,7 @@ pub fn build_work_list(
                 cb(work_list.total_files);
             }
 
-            if size < 1_000_000 {
+            if size < 1_048_576 {
                 work_list.small_files.push(item);
             } else {
                 work_list.large_files.push(item);
