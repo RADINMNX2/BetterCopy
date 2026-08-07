@@ -95,8 +95,12 @@ $BcopyMedian = Run-Bench "bcopy" {
     Start-Process -FilePath $BcopyPath -ArgumentList $FixtureDir, $BcopyDest, "-t", "12" -Wait -NoNewWindow
 } $BcopyDest
 
-# Robocopy (Reference baseline from first run, skipped here to optimize speed)
-$RobocopyMedian = 51.54
+# Run robocopy
+$RobocopyDest = Join-Path $DestFullPath "robocopy_run"
+$RobocopyMedian = Run-Bench "robocopy" {
+    # Robocopy exit code >= 8 indicates error, < 8 is success, but we ignore exit code to prevent stopping
+    robocopy $FixtureDir $RobocopyDest /MT:8 /NFL /NDL /NJH /NJS /nc /ns /np /r:0 /w:0 *>&1 | Out-Null
+} $RobocopyDest
 
 # 4. Print table and write results
 $TotalFiles = 100000

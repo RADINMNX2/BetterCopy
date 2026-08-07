@@ -12,7 +12,8 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, FILE
 use windows::Win32::Storage::FileSystem::{
     CopyFileExW, CreateFileW, MoveFileExW, SetFileTime,
     LPPROGRESS_ROUTINE_CALLBACK_REASON, MOVEFILE_COPY_ALLOWED,
-    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, OPEN_EXISTING,
+    MOVEFILE_WRITE_THROUGH, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS,
+    FILE_SHARE_READ, FILE_SHARE_WRITE,
 };
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard};
 use windows::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED};
@@ -114,6 +115,48 @@ fn copy_file_win32(
         }
     }
 }
+
+fn apply_directory_timestamps(dirs: &[crate::walker::CopyItem]) -> Result<(), String> {
+    for dir in dirs {
+        let dest_wide: Vec<u16> = dir.dest_path.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
+        unsafe {
+            let handle = CreateFileW(
+                PCWSTR(dest_wide.as_ptr()),
+                0x00000100, // WRITE_ATTRIBUTES
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS,
+                None,
+            );
+            if let Ok(h) = handle {
+                if h != INVALID_HANDLE_VALUE {
+                    let ft_create = FILETIME {
+                        dwLowDateTime: (dir.creation_time & 0xFFFFFFFF) as u32,
+                        dwHighDateTime: (dir.creation_time >> 32) as u32,
+                    };
+                    let ft_access = FILETIME {
+                        dwLowDateTime: (dir.last_access_time & 0xFFFFFFFF) as u32,
+                        dwHighDateTime: (dir.last_access_time >> 32) as u32,
+                    };
+                    let ft_write = FILETIME {
+                        dwLowDateTime: (dir.last_write_time & 0xFFFFFFFF) as u32,
+                        dwHighDateTime: (dir.last_write_time >> 32) as u32,
+                    };
+                    let _ = SetFileTime(
+                        h,
+                        Some(&ft_create),
+                        Some(&ft_access),
+                        Some(&ft_write),
+                    );
+                    let _ = CloseHandle(h);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 
 /// Helper to clear the Windows clipboard after a successful move operation.
 pub fn clear_clipboard() -> bool {
@@ -353,72 +396,98 @@ pub fn run_engine_with_work_list(
             }
         });
 
-        // 1. Large-file pool: Capped at min(2, concurrency) workers to prevent I/O seek contention
-        let large_workers = std::cmp::min(2, concurrency);
-        let mut large_threads = Vec::new();
-        for _ in 0..large_workers {
-            let idx = large_idx.clone();
-            let items = large_items.clone();
-            let state = global_state.clone();
-            let c_flag = cancel_flag.clone();
-
-            large_threads.push(thread::spawn(move || {
-                loop {
-                    if c_flag.load(Ordering::Relaxed) {
+        if concurrency == 1 {
+            // HDD Profile / single-thread: copy all files completely sequentially on the main thread
+            // to eliminate concurrent disk head seeks.
+            for item in large_items.iter() {
+                if cancel_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+                if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &global_state) {
+                    global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), e));
+                }
+            }
+            for dir in small_dirs.iter() {
+                for item in dir {
+                    if cancel_flag.load(Ordering::Relaxed) {
                         break;
                     }
-                    let current = idx.fetch_add(1, Ordering::SeqCst);
-                    if current >= items.len() {
-                        break;
-                    }
-                    let item = &items[current];
-                    if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &state) {
-                        state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), e));
+                    if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &global_state) {
+                        global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), e));
                     }
                 }
-            }));
-        }
+            }
+        } else {
+            // 1. Large-file pool: Capped at min(2, concurrency) workers to prevent I/O seek contention
+            let large_workers = std::cmp::min(2, concurrency);
+            let mut large_threads = Vec::new();
+            for _ in 0..large_workers {
+                let idx = large_idx.clone();
+                let items = large_items.clone();
+                let state = global_state.clone();
+                let c_flag = cancel_flag.clone();
 
-        // 2. Small-file pool: sharded by directory to prevent NTFS index lock contention
-        let mut small_threads = Vec::new();
-        for _ in 0..concurrency {
-            let idx = small_idx.clone();
-            let dirs = small_dirs.clone();
-            let state = global_state.clone();
-            let c_flag = cancel_flag.clone();
-
-            small_threads.push(thread::spawn(move || {
-                loop {
-                    if c_flag.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    let current = idx.fetch_add(1, Ordering::SeqCst);
-                    if current >= dirs.len() {
-                        break;
-                    }
-                    let items = &dirs[current];
-                    for item in items {
+                large_threads.push(thread::spawn(move || {
+                    loop {
                         if c_flag.load(Ordering::Relaxed) {
                             break;
                         }
+                        let current = idx.fetch_add(1, Ordering::SeqCst);
+                        if current >= items.len() {
+                            break;
+                        }
+                        let item = &items[current];
                         if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &state) {
                             state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), e));
                         }
                     }
-                }
-            }));
-        }
+                }));
+            }
 
-        // Wait for workers to complete
-        for t in large_threads {
-            let _ = t.join();
-        }
-        for t in small_threads {
-            let _ = t.join();
+            // 2. Small-file pool: sharded by directory to prevent NTFS index lock contention
+            let mut small_threads = Vec::new();
+            for _ in 0..concurrency {
+                let idx = small_idx.clone();
+                let dirs = small_dirs.clone();
+                let state = global_state.clone();
+                let c_flag = cancel_flag.clone();
+
+                small_threads.push(thread::spawn(move || {
+                    loop {
+                        if c_flag.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        let current = idx.fetch_add(1, Ordering::SeqCst);
+                        if current >= dirs.len() {
+                            break;
+                        }
+                        let items = &dirs[current];
+                        for item in items {
+                            if c_flag.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &state) {
+                                state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), e));
+                            }
+                        }
+                    }
+                }));
+            }
+
+            // Wait for workers to complete
+            for t in large_threads {
+                let _ = t.join();
+            }
+            for t in small_threads {
+                let _ = t.join();
+            }
         }
         done_flag.store(true, Ordering::Relaxed);
         let _ = progress_handle.join();
     }
+
+    // Post-copy pass: Apply original directory timestamps
+    let _ = apply_directory_timestamps(&work_list.dirs);
 
     // Two-Phase Move: Delete sources ONLY if everything copied without errors
     let mut failures = global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).clone();
