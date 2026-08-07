@@ -195,7 +195,7 @@ pub fn build_work_list(
         // Resolve self-copy and name collisions with already planned destinations
         let mut counter = 1;
         let mut check_dest = target_dest.clone();
-        while is_self_copy(&src_long, &check_dest) || planned_dests.contains(&check_dest) || check_dest.exists() {
+        while is_self_copy(&src_long, &check_dest) || planned_dests.contains(&check_dest) {
             let stem = target_dest.file_stem().unwrap_or_default().to_string_lossy().into_owned();
             let ext = target_dest.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
             let suffix = if counter == 1 {
