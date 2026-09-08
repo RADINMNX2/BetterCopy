@@ -1,0 +1,79 @@
+name: Build Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      NUGET_CERT_REVOCATION_MODE: offline
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4.1.6
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        lfs: true
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt
+
+    - name: Cache cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+
+    - name: Build bcopy CLI
+      run: cargo build --release -p bcopy
+
+    - name: Install tauri-cli
+      run: cargo install tauri-cli --locked --version 2.9.3
+
+    - name: Build Tauri GUI bundle
+      shell: pwsh
+      run: |
+        cd better_copy_gui/src-tauri
+        cargo tauri build
+
+    - name: Verify outputs
+      shell: pwsh
+      run: |
+        "=== bcopy ==="
+        Get-Item "target\release\bcopy.exe" | Select-Object FullName, Length
+        "=== bundles ==="
+        Get-ChildItem "better_copy_gui\src-tauri\target\release\bundle\" -Recurse -File | Select-Object FullName, Length
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4.3.3
+      with:
+        name: BetterCopy-windows
+        path: |
+          target\release\bcopy.exe
+          better_copy_gui\src-tauri\target\release\bundle\
+        compression-level: 0
+
+    - name: Create GitHub Release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TAG: v0.1.0-${{ github.run_id }}
+      shell: pwsh
+      run: |
+        $files = @()
+        $files += "target\release\bcopy.exe"
+        $files += @(Get-ChildItem "better_copy_gui\src-tauri\target\release\bundle\" -Recurse -File | ForEach-Object { $_.FullName })
+        if ($files.Count -eq 0) { Write-Error "No release assets found"; exit 1 }
+        $release = gh release create $env:TAG $files --repo ${{ github.repository }} --title "BetterCopy build ${{ github.run_id }}" --notes "Automated build of BetterCopy (CLI bcopy + Tauri GUI) for Windows." --latest
+        Write-Host "Release created: $release"
