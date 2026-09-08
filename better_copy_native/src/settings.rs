@@ -94,7 +94,7 @@ impl Settings {
                         .chain(std::iter::once(0))
                         .collect();
                     let bytes =
-                        unsafe { std::slice::from_raw_parts(value.as_ptr().cast::<u8>(), value.len() * 2) };
+                        std::slice::from_raw_parts(value.as_ptr().cast::<u8>(), value.len() * 2);
                     rc = RegSetValueExW(hkey, RUN_VALUE, 0, REG_SZ, Some(bytes));
                 }
             } else {

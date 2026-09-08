@@ -426,7 +426,7 @@ fn finish_cancelled(app: Arc<AppState>) {
     app.refresh();
 }
 
-fn build_log(app: &AppState, op: &str, sources: &[PathBuf], dest: &PathBuf, is_move: bool, verify: bool, files_done: usize, bytes_done: u64, elapsed: Duration, was_cancelled: bool, failures: &[(PathBuf, String)]) -> String {
+fn build_log(_app: &AppState, op: &str, sources: &[PathBuf], dest: &PathBuf, is_move: bool, verify: bool, files_done: usize, bytes_done: u64, elapsed: Duration, was_cancelled: bool, failures: &[(PathBuf, String)]) -> String {
     let mut out = String::new();
     out.push_str("BetterCopy job log\n====================\n");
     out.push_str(&format!("Started:    {}\n", now_stamp()));
@@ -686,7 +686,7 @@ fn elevated_main(job_file: &str) -> i32 {
     let text = match std::fs::read_to_string(job_file) {
         Ok(t) => t,
         Err(e) => {
-            write_elevated_result(false, 0, 0, false, vec![("", format!("no job file: {}", e))]);
+            write_elevated_result(false, 0, 0, false, vec![("".to_string(), format!("no job file: {}", e))]);
             return 2;
         }
     };
@@ -694,7 +694,7 @@ fn elevated_main(job_file: &str) -> i32 {
     let spec = match spec {
         Ok(s) => s,
         Err(e) => {
-            write_elevated_result(false, 0, 0, false, vec![("", format!("bad job json: {}", e))]);
+            write_elevated_result(false, 0, 0, false, vec![("".to_string(), format!("bad job json: {}", e))]);
             return 2;
         }
     };
@@ -1091,7 +1091,7 @@ fn main() {
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
 
-    let mut settings = Settings::load();
+    let settings = Settings::load();
     settings.apply_autostart(Some(&exe_path));
 
     let app = Arc::new(AppState::new(exe_path, settings));

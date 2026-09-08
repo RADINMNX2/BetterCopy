@@ -227,7 +227,6 @@ unsafe fn paint(hdc: HDC) {
     match ui.mode {
         UiMode::Hidden | UiMode::Analyzing => {
             buttons.cancel = Some(layout_button(hdc, right, by, 96, bh, "Cancel"));
-            right -= 108;
         }
         UiMode::Running => {
             buttons.cancel = Some(layout_button(hdc, right, by, 96, bh, "Cancel"));
