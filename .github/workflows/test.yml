@@ -44,7 +44,16 @@ jobs:
             exit 1
           }
       - name: Run engine integration tests
-        run: cargo test -p better_copy_core --release
+        shell: pwsh
+        run: |
+          $out = cargo test -p better_copy_core --release 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) {
+            $clean = $out -replace "\x1b\[[0-9;]*m",""
+            $escaped = $clean -replace "%","%25" -replace "`r","%0D" -replace "`n","%0A"
+            "::error::TEST DIAGNOSTICS: $escaped"
+            exit 1
+          }
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
