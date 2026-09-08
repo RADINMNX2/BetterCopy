@@ -970,7 +970,7 @@ fn remove_tray_icon(app: &Arc<AppState>) {
 fn create_tray_host() -> HWND {
     unsafe {
         let wc = WNDCLASSW {
-            lpfnWndProc: tray_wnd_proc,
+            lpfnWndProc: Some(tray_wnd_proc),
             hInstance: module_instance(),
             lpszClassName: w!("BetterCopyTrayHost"),
             ..Default::default()
