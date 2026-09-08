@@ -13,8 +13,8 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, FILE
 use windows::Win32::Storage::FileSystem::{
     CopyFileExW, CreateFileW, MoveFileExW, SetFileAttributesW, SetFileTime,
     FILE_ATTRIBUTE_FLAGS, LPPROGRESS_ROUTINE_CALLBACK_REASON, MOVEFILE_COPY_ALLOWED,
-    MOVEFILE_WRITE_THROUGH, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_SHARE_READ, FILE_SHARE_WRITE,
+    MOVEFILE_WRITE_THROUGH, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
 };
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard};
 use windows::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED};
