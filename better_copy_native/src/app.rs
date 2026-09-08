@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
 use crate::settings::Settings;
@@ -128,7 +128,7 @@ impl AppState {
         self.last_refresh_ms.store(now, Ordering::Relaxed);
         if let Ok(lock) = self.overlay_hwnd.lock() {
             if let Some(h) = *lock {
-                let _ = unsafe { PostMessageW(h, WM_UI_REFRESH, 0, 0) };
+                let _ = unsafe { PostMessageW(h, WM_UI_REFRESH, WPARAM(0), LPARAM(0)) };
             }
         }
     }

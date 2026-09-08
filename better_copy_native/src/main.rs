@@ -516,8 +516,8 @@ fn maybe_auto_close_dashboard(app: &Arc<AppState>) {
                 let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::PostMessageW(
                     hwnd,
                     crate::app::WM_UI_CLOSE_DELAY,
-                    0,
-                    0,
+                    windows::Win32::Foundation::WPARAM(0),
+                    windows::Win32::Foundation::LPARAM(0),
                 ) };
             }
         }
