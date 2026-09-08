@@ -53,6 +53,7 @@ fn main() {
     
     let mut is_move = false;
     let mut custom_concurrency = None;
+    let mut verify = true;
     let mut positionals = Vec::new();
     
     let mut i = 1;
@@ -64,6 +65,10 @@ fn main() {
                 custom_concurrency = Some(n);
             }
             i += 1;
+        } else if args[i] == "--verify" {
+            verify = true;
+        } else if args[i] == "--no-verify" {
+            verify = false;
         } else {
             positionals.push(args[i].clone());
         }
@@ -82,7 +87,7 @@ fn main() {
     
     if positionals.len() < 2 {
         eprintln!("Error: Missing source paths or destination path.");
-        eprintln!("Usage: bcopy [copy|move] [--threads N] <sources...> <destination>");
+        eprintln!("Usage: bcopy [copy|move] [--threads N] [--verify|--no-verify] <sources...> <destination>");
         std::process::exit(1);
     }
     
@@ -96,7 +101,7 @@ fn main() {
     println!("Starting BetterCopy Engine...");
     println!("Sources: {:?}", sources);
     println!("Destination: {} (Profile: {}, Concurrency: {} threads)", dest_path.display(), profile.description, concurrency_used);
-    println!("Operation: {}", if is_move { "Move (Cut)" } else { "Copy" });
+    println!("Operation: {} ({})", if is_move { "Move (Cut)" } else { "Copy" }, if verify { "verified content check enabled" } else { "size check only" });
     
     let cancel_flag = Arc::new(AtomicBool::new(false));
     
@@ -115,6 +120,8 @@ fn main() {
         is_move,
         custom_concurrency,
         cancel_flag,
+        Arc::new(std::sync::atomic::AtomicBool::new(false)), // no interactive pause in CLI
+        verify,
         None,
     );
     

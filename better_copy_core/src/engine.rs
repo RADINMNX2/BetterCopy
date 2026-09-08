@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -10,8 +11,8 @@ use std::time::{Duration, Instant};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, FILETIME};
 use windows::Win32::Storage::FileSystem::{
-    CopyFileExW, CreateFileW, MoveFileExW, SetFileTime,
-    LPPROGRESS_ROUTINE_CALLBACK_REASON, MOVEFILE_COPY_ALLOWED,
+    CopyFileExW, CreateFileW, MoveFileExW, SetFileAttributesW, SetFileTime,
+    FILE_ATTRIBUTE_FLAGS, LPPROGRESS_ROUTINE_CALLBACK_REASON, MOVEFILE_COPY_ALLOWED,
     MOVEFILE_WRITE_THROUGH, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS,
     FILE_SHARE_READ, FILE_SHARE_WRITE,
 };
@@ -21,27 +22,53 @@ use windows::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS, ES_S
 use crate::profiler::profile_device;
 use crate::walker::build_work_list;
 
-// Win32 copy flag constant
+// Win32 copy flag constants
 const COPY_FILE_NO_BUFFERING: u32 = 0x00001000;
 const COPY_FILE_FAIL_IF_EXISTS: u32 = 0x00000001;
 
-/// Global progress tracking state
+// Win32 file attribute constants + mask of attributes we replicate onto copies.
+const FILE_ATTRIBUTE_READONLY: u32 = 0x00000001;
+const FILE_ATTRIBUTE_HIDDEN: u32 = 0x00000002;
+const FILE_ATTRIBUTE_SYSTEM: u32 = 0x00000004;
+const FILE_ATTRIBUTE_ARCHIVE: u32 = 0x00000020;
+const FILE_ATTRIBUTE_TEMPORARY: u32 = 0x00000100;
+const FILE_ATTRIBUTE_OFFLINE: u32 = 0x00001000;
+const FILE_ATTRIBUTE_NOT_CONTENT_INDEXED: u32 = 0x00002000;
+const FILE_METADATA_MASK: u32 = FILE_ATTRIBUTE_READONLY
+    | FILE_ATTRIBUTE_HIDDEN
+    | FILE_ATTRIBUTE_SYSTEM
+    | FILE_ATTRIBUTE_ARCHIVE
+    | FILE_ATTRIBUTE_TEMPORARY
+    | FILE_ATTRIBUTE_OFFLINE
+    | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
+
+const WRITE_ATTRIBUTES: u32 = 0x00000100;
+
+/// How long transfer workers wait for a detached volume to come back before failing.
+pub const DEFAULT_RESILIENCE_TIMEOUT: Duration = Duration::from_secs(30);
+const DEVICE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const PAUSE_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Global progress tracking state.
 pub struct ProgressState {
     pub total_files: usize,
     pub total_bytes: u64,
     pub files_completed: AtomicUsize,
     pub bytes_completed: AtomicU64,
     pub cancel_flag: Arc<AtomicBool>,
+    pub pause_flag: Arc<AtomicBool>,
+    pub resilience_timeout: Duration,
     pub failed_files: Arc<Mutex<Vec<(PathBuf, String)>>>,
 }
 
-/// Thread-local state for CopyFileExW callback
+/// Thread-local state for CopyFileExW callback.
 struct FileProgressState {
     global_state: *const ProgressState,
     last_bytes: Cell<u64>,
 }
 
-/// Safe Win32 CopyFileExW progress callback.
+/// Safe Win32 CopyFileExW progress callback. Also honors pause (blocks in place,
+/// freezing the in-flight copy) and cancellation while paused.
 unsafe extern "system" fn copy_progress_routine(
     _total_file_size: i64,
     total_bytes_transferred: i64,
@@ -56,31 +83,154 @@ unsafe extern "system" fn copy_progress_routine(
     let state = unsafe { &*(lp_data as *const FileProgressState) };
     let global = unsafe { &*state.global_state };
 
+    // Pause: block inside the callback so the in-flight CopyFileExW freezes in place.
+    while global.pause_flag.load(Ordering::Relaxed) && !global.cancel_flag.load(Ordering::Relaxed) {
+        std::thread::sleep(PAUSE_POLL_INTERVAL);
+    }
+
     if global.cancel_flag.load(Ordering::Relaxed) {
         return 1; // PROGRESS_CANCEL (cancels copy and deletes destination file)
     }
 
     let current = total_bytes_transferred as u64;
-    let delta = current - state.last_bytes.get();
+    let delta = current.saturating_sub(state.last_bytes.get());
     state.last_bytes.set(current);
     global.bytes_completed.fetch_add(delta, Ordering::SeqCst);
 
     0 // PROGRESS_CONTINUE
 }
 
+/// Returns true if `path` metadata can be read (used to detect detached volumes).
+pub fn path_accessible(path: &Path) -> bool {
+    fs::metadata(path).is_ok()
+}
 
+/// Waits until `parent` becomes accessible again, honoring cancellation and pause.
+/// Gives up after `timeout` of active waiting (time spent paused does not consume budget).
+pub fn wait_for_device(
+    parent: &Path,
+    cancel: &AtomicBool,
+    pause: &AtomicBool,
+    timeout: Duration,
+) -> bool {
+    let mut budget = timeout;
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return false;
+        }
+        if !pause.load(Ordering::Relaxed) {
+            if path_accessible(parent) {
+                return true;
+            }
+            let wait = DEVICE_POLL_INTERVAL.min(budget);
+            if wait.is_zero() {
+                return false;
+            }
+            thread::sleep(wait);
+            budget = budget.saturating_sub(wait);
+        } else {
+            // Paused: hold until resumed or cancelled; do not consume the resilience budget.
+            while pause.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
+                thread::sleep(PAUSE_POLL_INTERVAL);
+            }
+        }
+    }
+}
 
-/// Copy a single file using Win32 CopyFileExW with unbuffered write options for large files.
-fn copy_file_win32(
-    src: &Path,
-    dest: &Path,
+/// Fast, deterministic content fingerprint (FNV-1a 64-bit). Used for verified moves.
+pub fn file_hash_fnv1a64(path: &Path) -> std::io::Result<u64> {
+    let mut file = fs::File::open(path)?;
+    let mut hash: u64 = 0xcbf29ce484222325;
+    let mut buf = [0u8; 65536];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        let mut i = 0;
+        while i < n {
+            hash ^= buf[i] as u64;
+            hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+            i += 1;
+        }
+    }
+    Ok(hash)
+}
+
+/// Verifies that the destination matches the source before a two-phase move delete.
+/// When `verify` is true a content hash comparison is performed; otherwise only size.
+pub fn files_match_verified(src: &Path, dest: &Path, src_size: u64, verify: bool) -> bool {
+    if verify {
+        match (file_hash_fnv1a64(src), file_hash_fnv1a64(dest)) {
+            (Ok(s), Ok(d)) => s == d,
+            _ => false,
+        }
+    } else {
+        fs::metadata(dest).map(|m| m.len() == src_size).unwrap_or(false)
+    }
+}
+
+/// Applies the source timestamps to a path (used for both files and directories).
+fn set_file_times(path: &Path, creation: u64, access: u64, write_time: u64) -> Result<(), String> {
+    let wide: Vec<u16> = path.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let handle = CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            WRITE_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            None,
+        );
+        if let Ok(h) = handle {
+            if h != INVALID_HANDLE_VALUE {
+                let ft_create = FILETIME {
+                    dwLowDateTime: (creation & 0xFFFFFFFF) as u32,
+                    dwHighDateTime: (creation >> 32) as u32,
+                };
+                let ft_access = FILETIME {
+                    dwLowDateTime: (access & 0xFFFFFFFF) as u32,
+                    dwHighDateTime: (access >> 32) as u32,
+                };
+                let ft_write = FILETIME {
+                    dwLowDateTime: (write_time & 0xFFFFFFFF) as u32,
+                    dwHighDateTime: (write_time >> 32) as u32,
+                };
+                let res = SetFileTime(h, Some(&ft_create), Some(&ft_access), Some(&ft_write));
+                let _ = CloseHandle(h);
+                return res.map_err(|e| e.to_string());
+            }
+            return Err("Invalid handle when applying file times".to_string());
+        }
+        Err(format!("Failed to open destination for timestamp preservation: {}", path.display()))
+    }
+}
+
+/// Replicates source file attributes + timestamps onto the destination copy.
+fn apply_file_metadata(item: &crate::walker::CopyItem) -> Result<(), String> {
+    let attrs = item.attributes & FILE_METADATA_MASK;
+    unsafe {
+        let _ = SetFileAttributesW(PCWSTR(item.dest_wide.as_ptr()), FILE_ATTRIBUTE_FLAGS(attrs));
+    }
+    set_file_times(&item.dest_path, item.creation_time, item.last_access_time, item.last_write_time)
+}
+
+/// Apply directory timestamps after a copy pass.
+fn apply_directory_timestamps(dirs: &[crate::walker::CopyItem]) -> Result<(), String> {
+    for dir in dirs {
+        let _ = set_file_times(&dir.dest_path, dir.creation_time, dir.last_access_time, dir.last_write_time);
+    }
+    Ok(())
+}
+
+/// Actual CopyFileExW invocation. Does not do failure accounting or resilience.
+fn do_copy(
+    src_wide: &[u16],
+    dest_wide: &[u16],
     size: u64,
     global_state: &ProgressState,
 ) -> Result<(), String> {
-    let src_wide: Vec<u16> = src.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
-    let dest_wide: Vec<u16> = dest.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
-
-    // Fail if exists to prevent silent overwrite, and bypass caching for large files.
     let mut flags = COPY_FILE_FAIL_IF_EXISTS;
     if size >= 256 * 1024 * 1024 {
         flags |= COPY_FILE_NO_BUFFERING;
@@ -100,63 +250,44 @@ fn copy_file_win32(
             None,
             flags,
         );
-
-        if res.is_ok() {
-            global_state.files_completed.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        } else {
-            let err = res.err().map(|e| e.to_string()).unwrap_or_else(|| "Unknown Win32 error".to_string());
-            if global_state.cancel_flag.load(Ordering::Relaxed) {
-                Err("Cancelled".to_string())
-            } else {
-                global_state.files_completed.fetch_add(1, Ordering::SeqCst);
-                Err(err)
-            }
-        }
+        res.map_err(|e| e.to_string())
     }
 }
 
-fn apply_directory_timestamps(dirs: &[crate::walker::CopyItem]) -> Result<(), String> {
-    for dir in dirs {
-        let dest_wide: Vec<u16> = dir.dest_path.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
-        unsafe {
-            let handle = CreateFileW(
-                PCWSTR(dest_wide.as_ptr()),
-                0x00000100, // WRITE_ATTRIBUTES
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                None,
-                OPEN_EXISTING,
-                FILE_FLAG_BACKUP_SEMANTICS,
-                None,
-            );
-            if let Ok(h) = handle {
-                if h != INVALID_HANDLE_VALUE {
-                    let ft_create = FILETIME {
-                        dwLowDateTime: (dir.creation_time & 0xFFFFFFFF) as u32,
-                        dwHighDateTime: (dir.creation_time >> 32) as u32,
-                    };
-                    let ft_access = FILETIME {
-                        dwLowDateTime: (dir.last_access_time & 0xFFFFFFFF) as u32,
-                        dwHighDateTime: (dir.last_access_time >> 32) as u32,
-                    };
-                    let ft_write = FILETIME {
-                        dwLowDateTime: (dir.last_write_time & 0xFFFFFFFF) as u32,
-                        dwHighDateTime: (dir.last_write_time >> 32) as u32,
-                    };
-                    let _ = SetFileTime(
-                        h,
-                        Some(&ft_create),
-                        Some(&ft_access),
-                        Some(&ft_write),
-                    );
-                    let _ = CloseHandle(h);
-                }
+/// Copy a single file through Win32 CopyFileExW, preserving metadata on success,
+/// and retrying once after waiting for a detached volume when applicable.
+fn copy_file_win32(
+    item: &crate::walker::CopyItem,
+    global_state: &ProgressState,
+) -> Result<(), String> {
+    let result = do_copy(&item.src_wide, &item.dest_wide, item.size, global_state);
+
+    if result.is_ok() {
+        let _ = apply_file_metadata(item);
+        return Ok(());
+    }
+
+    // Device-gone resiliency: if the destination volume is unreachable, wait for it
+    // to come back (honoring pause/cancel) and retry the copy once.
+    if let Some(parent) = item.dest_path.parent() {
+        if !path_accessible(parent) {
+            if wait_for_device(
+                parent,
+                &global_state.cancel_flag,
+                &global_state.pause_flag,
+                global_state.resilience_timeout,
+            ) {
+                return do_copy(&item.src_wide, &item.dest_wide, item.size, global_state);
             }
+            return Err(format!(
+                "Destination volume unavailable and did not return within {}s: {}",
+                global_state.resilience_timeout.as_secs(),
+                item.dest_path.display()
+            ));
         }
     }
-    Ok(())
+    result
 }
-
 
 /// Helper to clear the Windows clipboard after a successful move operation.
 pub fn clear_clipboard() -> bool {
@@ -181,13 +312,24 @@ pub struct EngineSummary {
     pub was_cancelled: bool,
 }
 
+/// Blocks while the transfer is paused (used between items so workers do not claim
+/// more work while paused).
+fn wait_while_paused(cancel: &AtomicBool, pause: &AtomicBool) {
+    while pause.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
+        thread::sleep(PAUSE_POLL_INTERVAL);
+    }
+}
+
 /// Run a multi-threaded copy/move operation based on auto-tuned concurrency.
+#[allow(clippy::too_many_arguments)]
 pub fn run_engine(
     sources: &[PathBuf],
     dest: &Path,
     is_move: bool,
     custom_concurrency: Option<usize>,
     cancel_flag: Arc<AtomicBool>,
+    pause_flag: Arc<AtomicBool>,
+    verify: bool,
     progress_callback: Option<Box<dyn Fn(usize, u64) + Send + Sync>>,
 ) -> EngineSummary {
     let start_time = Instant::now();
@@ -221,11 +363,14 @@ pub fn run_engine(
         is_move,
         custom_concurrency,
         cancel_flag,
+        pause_flag,
+        verify,
         progress_callback,
     )
 }
 
 /// Run a multi-threaded copy/move operation with a pre-built work list.
+#[allow(clippy::too_many_arguments)]
 pub fn run_engine_with_work_list(
     work_list: crate::walker::WorkList,
     sources: &[PathBuf],
@@ -233,6 +378,8 @@ pub fn run_engine_with_work_list(
     is_move: bool,
     custom_concurrency: Option<usize>,
     cancel_flag: Arc<AtomicBool>,
+    pause_flag: Arc<AtomicBool>,
+    verify: bool,
     progress_callback: Option<Box<dyn Fn(usize, u64) + Send + Sync>>,
 ) -> EngineSummary {
     let start_time = Instant::now();
@@ -244,6 +391,7 @@ pub fn run_engine_with_work_list(
 
     let profile = profile_device(dest);
     let concurrency = custom_concurrency.unwrap_or(profile.concurrency);
+    let resilience_timeout = DEFAULT_RESILIENCE_TIMEOUT;
 
     // Ensure destination directory itself exists
     if let Err(e) = fs::create_dir_all(dest) {
@@ -265,6 +413,8 @@ pub fn run_engine_with_work_list(
         files_completed: AtomicUsize::new(0),
         bytes_completed: AtomicU64::new(0),
         cancel_flag: cancel_flag.clone(),
+        pause_flag: pause_flag.clone(),
+        resilience_timeout,
         failed_files: Arc::new(Mutex::new(Vec::new())),
     });
 
@@ -281,6 +431,7 @@ pub fn run_engine_with_work_list(
         if cancel_flag.load(Ordering::Relaxed) {
             break;
         }
+        wait_while_paused(&cancel_flag, &pause_flag);
         if let Err(e) = fs::create_dir_all(&dir.dest_path) {
             global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((
                 dir.src_path.clone(),
@@ -315,7 +466,7 @@ pub fn run_engine_with_work_list(
         }
     }
     let dir_works: Vec<Vec<crate::walker::CopyItem>> = dir_groups.into_values().collect();
-    
+
     let small_dirs = Arc::new(dir_works);
     let large_items = Arc::new(work_list.large_files);
 
@@ -326,12 +477,11 @@ pub fn run_engine_with_work_list(
                 if cancel_flag.load(Ordering::Relaxed) {
                     break;
                 }
-                let src_wide: Vec<u16> = item.src_path.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
-                let dest_wide: Vec<u16> = item.dest_path.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
+                wait_while_paused(&cancel_flag, &pause_flag);
                 unsafe {
                     let res = MoveFileExW(
-                        PCWSTR(src_wide.as_ptr()),
-                        PCWSTR(dest_wide.as_ptr()),
+                        PCWSTR(item.src_wide.as_ptr()),
+                        PCWSTR(item.dest_wide.as_ptr()),
                         MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED,
                     );
                     if res.is_ok() {
@@ -350,12 +500,11 @@ pub fn run_engine_with_work_list(
             if cancel_flag.load(Ordering::Relaxed) {
                 break;
             }
-            let src_wide: Vec<u16> = item.src_path.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
-            let dest_wide: Vec<u16> = item.dest_path.to_string_lossy().encode_utf16().chain(std::iter::once(0)).collect();
+            wait_while_paused(&cancel_flag, &pause_flag);
             unsafe {
                 let res = MoveFileExW(
-                    PCWSTR(src_wide.as_ptr()),
-                    PCWSTR(dest_wide.as_ptr()),
+                    PCWSTR(item.src_wide.as_ptr()),
+                    PCWSTR(item.dest_wide.as_ptr()),
                     MOVEFILE_WRITE_THROUGH | MOVEFILE_COPY_ALLOWED,
                 );
                 if res.is_ok() {
@@ -403,7 +552,8 @@ pub fn run_engine_with_work_list(
                 if cancel_flag.load(Ordering::Relaxed) {
                     break;
                 }
-                if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &global_state) {
+                wait_while_paused(&cancel_flag, &pause_flag);
+                if let Err(e) = copy_file_win32(item, &global_state) {
                     global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), e));
                 }
             }
@@ -412,7 +562,8 @@ pub fn run_engine_with_work_list(
                     if cancel_flag.load(Ordering::Relaxed) {
                         break;
                     }
-                    if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &global_state) {
+                    wait_while_paused(&cancel_flag, &pause_flag);
+                    if let Err(e) = copy_file_win32(item, &global_state) {
                         global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), e));
                     }
                 }
@@ -426,18 +577,20 @@ pub fn run_engine_with_work_list(
                 let items = large_items.clone();
                 let state = global_state.clone();
                 let c_flag = cancel_flag.clone();
+                let p_flag = pause_flag.clone();
 
                 large_threads.push(thread::spawn(move || {
                     loop {
                         if c_flag.load(Ordering::Relaxed) {
                             break;
                         }
+                        wait_while_paused(&c_flag, &p_flag);
                         let current = idx.fetch_add(1, Ordering::SeqCst);
                         if current >= items.len() {
                             break;
                         }
                         let item = &items[current];
-                        if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &state) {
+                        if let Err(e) = copy_file_win32(item, &state) {
                             state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), e));
                         }
                     }
@@ -451,12 +604,14 @@ pub fn run_engine_with_work_list(
                 let dirs = small_dirs.clone();
                 let state = global_state.clone();
                 let c_flag = cancel_flag.clone();
+                let p_flag = pause_flag.clone();
 
                 small_threads.push(thread::spawn(move || {
                     loop {
                         if c_flag.load(Ordering::Relaxed) {
                             break;
                         }
+                        wait_while_paused(&c_flag, &p_flag);
                         let current = idx.fetch_add(1, Ordering::SeqCst);
                         if current >= dirs.len() {
                             break;
@@ -466,7 +621,8 @@ pub fn run_engine_with_work_list(
                             if c_flag.load(Ordering::Relaxed) {
                                 break;
                             }
-                            if let Err(e) = copy_file_win32(&item.src_path, &item.dest_path, item.size, &state) {
+                            wait_while_paused(&c_flag, &p_flag);
+                            if let Err(e) = copy_file_win32(item, &state) {
                                 state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), e));
                             }
                         }
@@ -498,14 +654,7 @@ pub fn run_engine_with_work_list(
         if !is_same_volume {
             for dir in small_dirs.iter() {
                 for file in dir {
-                    // Verification check: verify destination existence and size
-                    let mut success = false;
-                    if let Ok(dest_meta) = fs::metadata(&file.dest_path) {
-                        if dest_meta.len() == file.size {
-                            success = true;
-                        }
-                    }
-                    if success {
+                    if files_match_verified(&file.src_path, &file.dest_path, file.size, verify) {
                         if let Err(e) = fs::remove_file(&file.src_path) {
                             failures.push((file.src_path.clone(), format!("Move cleanup failed: {}", e)));
                         }
@@ -515,13 +664,7 @@ pub fn run_engine_with_work_list(
                 }
             }
             for file in large_items.iter() {
-                let mut success = false;
-                if let Ok(dest_meta) = fs::metadata(&file.dest_path) {
-                    if dest_meta.len() == file.size {
-                        success = true;
-                    }
-                }
-                if success {
+                if files_match_verified(&file.src_path, &file.dest_path, file.size, verify) {
                     if let Err(e) = fs::remove_file(&file.src_path) {
                         failures.push((file.src_path.clone(), format!("Move cleanup failed: {}", e)));
                     }
@@ -566,10 +709,11 @@ pub fn run_delete_engine(
     sources: &[PathBuf],
     concurrency: usize,
     cancel_flag: Arc<AtomicBool>,
+    pause_flag: Arc<AtomicBool>,
     progress_callback: Option<Box<dyn Fn(usize, u64) + Send + Sync + 'static>>,
 ) -> EngineSummary {
     let start_time = Instant::now();
-    
+
     // Prevent system sleep during operation
     unsafe {
         let _ = SetThreadExecutionState(ES_SYSTEM_REQUIRED | ES_CONTINUOUS);
@@ -595,12 +739,13 @@ pub fn run_delete_engine(
             };
         }
     };
-    
+
     run_delete_engine_with_delete_list(
         delete_list,
         sources,
         concurrency,
         cancel_flag,
+        pause_flag,
         progress_callback,
     )
 }
@@ -611,10 +756,11 @@ pub fn run_delete_engine_with_delete_list(
     _sources: &[PathBuf],
     concurrency: usize,
     cancel_flag: Arc<AtomicBool>,
+    pause_flag: Arc<AtomicBool>,
     progress_callback: Option<Box<dyn Fn(usize, u64) + Send + Sync + 'static>>,
 ) -> EngineSummary {
     let start_time = Instant::now();
-    
+
     // Prevent system sleep during operation
     unsafe {
         let _ = SetThreadExecutionState(ES_SYSTEM_REQUIRED | ES_CONTINUOUS);
@@ -628,6 +774,8 @@ pub fn run_delete_engine_with_delete_list(
         files_completed: AtomicUsize::new(0),
         bytes_completed: AtomicU64::new(0),
         cancel_flag: cancel_flag.clone(),
+        pause_flag: pause_flag.clone(),
+        resilience_timeout: DEFAULT_RESILIENCE_TIMEOUT,
         failed_files: Arc::new(Mutex::new(Vec::new())),
     });
 
@@ -663,29 +811,31 @@ pub fn run_delete_engine_with_delete_list(
             let items = files.clone();
             let state = global_state.clone();
             let c_flag = cancel_flag.clone();
+            let p_flag = pause_flag.clone();
 
             threads.push(thread::spawn(move || {
                 loop {
                     if c_flag.load(Ordering::Relaxed) {
                         break;
                     }
+                    wait_while_paused(&c_flag, &p_flag);
                     let current = idx.fetch_add(1, Ordering::SeqCst);
                     if current >= items.len() {
                         break;
                     }
                     let path = &items[current];
-                    
+
                     // Note: Check if metadata is directory for directory symlinks/junctions
                     let res = if path.is_dir() {
                         fs::remove_dir(path)
                     } else {
                         fs::remove_file(path)
                     };
-                    
+
                     if let Err(e) = res {
                         state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((path.clone(), e.to_string()));
                     }
-                    
+
                     state.files_completed.fetch_add(1, Ordering::SeqCst);
                 }
             }));
@@ -705,7 +855,7 @@ pub fn run_delete_engine_with_delete_list(
         let mut sorted_dirs = delete_list.dirs;
         // Sort by path length descending (so child directories are deleted before parents)
         sorted_dirs.sort_by(|a, b| b.to_string_lossy().len().cmp(&a.to_string_lossy().len()));
-        
+
         for dir in sorted_dirs {
             if let Err(e) = fs::remove_dir(&dir) {
                 failures.push((dir, format!("Failed to delete directory: {}", e)));
@@ -734,4 +884,3 @@ pub fn run_delete_engine_with_delete_list(
         was_cancelled,
     }
 }
-

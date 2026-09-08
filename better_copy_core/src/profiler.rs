@@ -61,7 +61,8 @@ pub struct STORAGE_DEVICE_DESCRIPTOR {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceClass {
-    SsdNvme,      // Internal SSD/NVMe or UASP USB
+    SsdNvme,      // Internal NVMe or UASP USB
+    SataSsd,      // Internal SATA SSD (shallower queue depth benefits are smaller)
     Unknown,      // Device didn't report clearly
     BotUsb,       // BOT USB or standard flash drive
     Hdd,          // Seek penalty detected
@@ -71,6 +72,7 @@ impl DeviceClass {
     pub fn default_concurrency(&self) -> usize {
         match self {
             DeviceClass::SsdNvme => 16,
+            DeviceClass::SataSsd => 8,
             DeviceClass::Unknown => 16,
             DeviceClass::BotUsb => 2,
             DeviceClass::Hdd => 1,
@@ -311,7 +313,7 @@ pub fn profile_device(path: &Path) -> DeviceProfile {
                     class = DeviceClass::SsdNvme;
                     description = "Internal NVMe SSD".to_string();
                 } else if bus == 11 {
-                    class = DeviceClass::SsdNvme;
+                    class = DeviceClass::SataSsd;
                     description = "Internal SATA SSD".to_string();
                 } else {
                     class = DeviceClass::SsdNvme;

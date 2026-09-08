@@ -1,0 +1,24 @@
+[package]
+name = "better_copy_native"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight native Windows tray + dashboard UI for the BetterCopy engine"
+
+[[bin]]
+name = "better_copy_native"
+path = "src/main.rs"
+
+[dependencies]
+better_copy_core = { path = "../better_copy_core" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+] }

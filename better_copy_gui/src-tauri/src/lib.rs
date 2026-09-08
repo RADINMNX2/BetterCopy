@@ -346,6 +346,8 @@ pub fn run() {
                           is_move,
                           None,
                           cancel_flag_worker.clone(),
+                          Arc::new(AtomicBool::new(false)), // pause not wired to Tauri UI yet
+                          false,                            // verified-move hash check off for Tauri
                           Some(progress_cb),
                       );
                       
@@ -519,6 +521,7 @@ pub fn run() {
                           &sources,
                           concurrency,
                           cancel_flag_worker.clone(),
+                          Arc::new(AtomicBool::new(false)), // pause not wired to Tauri UI yet
                           Some(progress_cb),
                       );
                       

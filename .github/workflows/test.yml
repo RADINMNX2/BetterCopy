@@ -1,0 +1,33 @@
+name: test
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  NUGET_CERT_REVOCATION_MODE: offline
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4.1.6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: bc-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+      - name: Build core, CLI and native dashboard
+        run: cargo build --release -p bcopy -p better_copy_core -p better_copy_native
+      - name: Run engine integration tests
+        run: cargo test -p better_copy_core --release

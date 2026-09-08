@@ -3,5 +3,6 @@ resolver = "2"
 members = [
     "better_copy_core",
     "bcopy",
+    "better_copy_native",
     "better_copy_gui/src-tauri"
 ]

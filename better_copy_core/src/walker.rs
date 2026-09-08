@@ -1,4 +1,4 @@
-use std::fs;
+﻿use std::fs;
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,6 +25,7 @@ pub struct CopyItem {
     pub creation_time: u64,
     pub last_access_time: u64,
     pub last_write_time: u64,
+    pub attributes: u32,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -122,6 +123,7 @@ fn walk_dir(
                 dest_wide,
                 size: 0,
                 is_dir: true,
+                attributes: file_attr,
                 creation_time,
                 last_access_time,
                 last_write_time,
@@ -139,6 +141,7 @@ fn walk_dir(
                 dest_wide,
                 size,
                 is_dir: false,
+                attributes: file_attr,
                 creation_time,
                 last_access_time,
                 last_write_time,
@@ -225,6 +228,7 @@ pub fn build_work_list(
                 dest_wide,
                 size: 0,
                 is_dir: true,
+                attributes: file_attr,
                 creation_time,
                 last_access_time,
                 last_write_time,
@@ -242,6 +246,7 @@ pub fn build_work_list(
                 dest_wide,
                 size,
                 is_dir: false,
+                attributes: file_attr,
                 creation_time,
                 last_access_time,
                 last_write_time,
