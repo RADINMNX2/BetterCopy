@@ -40,7 +40,7 @@ jobs:
             $idx = $clean.IndexOf("error[E")
             if ($idx -ge 0) { $clean = $clean.Substring($idx) }
             $escaped = $clean -replace "%","%25" -replace "`r","%0D" -replace "`n","%0A"
-            "::error::BUILD DIAGNOSTICS`n$escaped"
+            "::error::BUILD DIAGNOSTICS: $escaped"
             exit 1
           }
       - name: Run engine integration tests
