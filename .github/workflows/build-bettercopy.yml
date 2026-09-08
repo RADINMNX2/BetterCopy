@@ -40,7 +40,16 @@ jobs:
       run: cargo build --release -p bcopy
 
     - name: Install tauri-cli
-      run: cargo install tauri-cli --locked --version 2.9.3
+      run: cargo install tauri-cli --locked
+
+    - name: Patch tauri.conf.json for schema compat
+      shell: pwsh
+      run: |
+        $p = "better_copy_gui\src-tauri\tauri.conf.json"
+        $json = Get-Content $p -Raw | ConvertFrom-Json
+        $json.bundle.PSObject.Properties.Remove("android")
+        $json | ConvertTo-Json -Depth 20 | Set-Content $p -Encoding utf8
+        Get-Content $p
 
     - name: Build Tauri GUI bundle
       shell: pwsh
