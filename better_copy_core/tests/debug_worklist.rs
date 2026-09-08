@@ -1,8 +1,9 @@
 #![cfg(windows)]
 
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::os::windows::fs::MetadataExt;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use better_copy_core::walker::{build_work_list, ensure_long_path};
