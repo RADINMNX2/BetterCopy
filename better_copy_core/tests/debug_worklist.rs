@@ -1,14 +1,13 @@
 #![cfg(windows)]
 
 use std::fs;
-use std::os::windows::fs::MetadataExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use better_copy_core::engine::{run_engine, EngineSummary};
 use better_copy_core::profiler::profile_device;
-use better_copy_core::walker::{build_work_list, ensure_long_path};
+use better_copy_core::walker::build_work_list;
 
 fn write_tree(root: &PathBuf, files: usize, dirs: usize, size: usize) -> PathBuf {
     fs::create_dir_all(root).unwrap();
@@ -88,6 +87,9 @@ fn debug_full_pipeline() {
         println!("  {}", p);
     }
     println!("=== src still exists? {} ===", src.exists());
+    println!("=== summary check: files_copied={} failures={} ===", s.files_copied, s.failures.len());
+    assert_eq!(s.files_copied, 15);
+    assert!(s.failures.is_empty(), "failures: {:?}", s.failures);
 
     let _ = fs::remove_dir_all(&root);
 }

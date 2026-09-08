@@ -46,7 +46,7 @@ jobs:
       - name: Run engine integration tests
         shell: pwsh
         run: |
-          $out = cargo test -p better_copy_core --release 2>&1 | Out-String
+          $out = cargo test -p better_copy_core --release -- --nocapture 2>&1 | Out-String
           Write-Host $out
           if ($LASTEXITCODE -ne 0) {
             $clean = $out -replace "\x1b\[[0-9;]*m",""
