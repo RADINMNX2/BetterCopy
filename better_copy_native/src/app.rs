@@ -85,12 +85,21 @@ pub struct AppState {
     pub busy: AtomicBool,
     pub hotkeys_enabled: AtomicBool,
     pub settings: Mutex<Settings>,
-    pub overlay_hwnd: Mutex<Option<HWND>>,
-    pub tray_hwnd: Mutex<Option<HWND>>,
+    pub overlay_hwnd: Mutex<Option<SafeHwnd>>,
+    pub tray_hwnd: Mutex<Option<SafeHwnd>>,
     pub overlay_visible: AtomicBool,
     pub last_job: Mutex<Option<JobSpec>>,
     last_refresh_ms: AtomicI64,
 }
+
+/// Owns a window handle. HWND wraps a raw pointer so it is neither Send nor
+/// Sync; window handles are legally shared across the app's worker threads, so
+/// we hand the needed marker impls to this wrapper only.
+#[derive(Clone, Copy, Debug)]
+pub struct SafeHwnd(pub HWND);
+
+unsafe impl Send for SafeHwnd {}
+unsafe impl Sync for SafeHwnd {}
 
 impl AppState {
     pub fn new(exe_path: String, settings: Settings) -> Self {
@@ -128,7 +137,7 @@ impl AppState {
         self.last_refresh_ms.store(now, Ordering::Relaxed);
         if let Ok(lock) = self.overlay_hwnd.lock() {
             if let Some(h) = *lock {
-                let _ = unsafe { PostMessageW(h, WM_UI_REFRESH, WPARAM(0), LPARAM(0)) };
+                let _ = unsafe { PostMessageW(h.0, WM_UI_REFRESH, WPARAM(0), LPARAM(0)) };
             }
         }
     }

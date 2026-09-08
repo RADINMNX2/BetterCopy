@@ -2,18 +2,17 @@ use std::cell::RefCell;
 use std::sync::{Arc, Mutex as SyncMutex, OnceLock};
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{BOOL, COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DEFAULT_GUI_FONT, DeleteObject, DrawTextW, DT_CENTER,
     DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE, DT_VCENTER, EndPaint, FillRect, FrameRect,
-    GetStockObject, HDC, HGDIOBJ, PAINTSTRUCT, RoundRect, SelectObject, SetBkMode,
-    SetTextColor, TRANSPARENT, DRAW_TEXT_FORMAT,
+    GetStockObject, HDC, HGDIOBJ, InvalidateRect, PAINTSTRUCT, RoundRect, SelectObject,
+    SetBkMode, SetTextColor, TRANSPARENT, DRAW_TEXT_FORMAT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetSystemMetrics, InvalidateRect, KillTimer,
-    RegisterClassW, ShowWindow, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOWNOACTIVATE,
-    WNDCLASSW, WNDPROC, WS_CLIPCHILDREN, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_POPUP,
+    CreateWindowExW, DefWindowProcW, GetSystemMetrics, KillTimer, RegisterClassW, ShowWindow,
+    SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, WNDCLASSW, WNDPROC, WS_CLIPCHILDREN,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::app::{APP, UiMode};
@@ -167,7 +166,7 @@ unsafe fn paint(hdc: HDC) {
             mb_done,
             mb_total,
             ui.speed_mbps,
-            format_eta(ui.eta_secs),
+            crate::format_eta(ui.eta_secs),
         )
     };
     draw_text(hdc, &stats, &mut stats_rect, DT_LEFT | DT_SINGLELINE, rgb(190, 193, 202));

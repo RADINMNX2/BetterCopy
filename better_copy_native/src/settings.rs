@@ -7,7 +7,7 @@ use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
 use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW,
     RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE,
-    REG_OPEN_CREATE_OPTIONS, REG_OPEN_KEY_OPTIONS, REG_SZ,
+    REG_OPEN_CREATE_OPTIONS, REG_SZ,
 };
 
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
@@ -76,7 +76,7 @@ impl Settings {
                 HKEY_CURRENT_USER,
                 RUN_KEY,
                 0,
-                None,
+                PCWSTR::null(),
                 REG_OPEN_CREATE_OPTIONS(0),
                 KEY_SET_VALUE,
                 None,
@@ -112,7 +112,7 @@ impl Settings {
             let rc = RegOpenKeyExW(
                 HKEY_CURRENT_USER,
                 RUN_KEY,
-                REG_OPEN_KEY_OPTIONS(0),
+                0u32,
                 KEY_QUERY_VALUE,
                 &mut hkey,
             );

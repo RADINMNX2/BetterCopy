@@ -16,14 +16,17 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
-use windows::Win32::UI::Shell::ShellExecuteW;
+use windows::Win32::UI::Shell::{
+    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION, NOTIFYICONDATAW,
+    NOTIFYICON_VERSION_4, ShellExecuteW, Shell_NotifyIconW,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, GetCursorPos,
     AppendMenuW,
     GetMessageW, HMENU, HWND_MESSAGE, LoadIconW, MF_CHECKED, MF_SEPARATOR, MF_STRING,
-    MF_UNCHECKED, MSG, NIF_ICON, NIF_MESSAGE, NIF_TIP, NOTIFYICONDATAW, PostQuitMessage,
-    RegisterClassW, Shell_NotifyIconW, SW_SHOWNORMAL, TrackPopupMenu, TranslateMessage,
-    WNDCLASSW, NIM_ADD, NIM_DELETE, NIM_SETVERSION, NOTIFYICON_VERSION_4,
+    MF_UNCHECKED, MSG, PostQuitMessage,
+    RegisterClassW, SW_SHOWNORMAL, TrackPopupMenu, TranslateMessage,
+    WNDCLASSW,
 };
 
 use crate::app::{APP, AppState, JobSpec, UiMode, UiView};
@@ -63,7 +66,7 @@ fn module_instance() -> HINSTANCE {
 fn show_dashboard(app: &Arc<AppState>) {
     if let Ok(lock) = app.overlay_hwnd.lock() {
         if let Some(hwnd) = *lock {
-            crate::overlay::show(hwnd);
+            crate::overlay::show(hwnd.0);
         }
     }
 }
@@ -71,7 +74,7 @@ fn show_dashboard(app: &Arc<AppState>) {
 fn hide_dashboard(app: &Arc<AppState>) {
     if let Ok(lock) = app.overlay_hwnd.lock() {
         if let Some(hwnd) = *lock {
-            crate::overlay::hide(hwnd);
+            crate::overlay::hide(hwnd.0);
         }
     }
 }
@@ -91,7 +94,7 @@ fn set_ui(app: &Arc<AppState>, f: impl FnOnce(&mut UiView)) {
     app.refresh();
 }
 
-fn format_eta(secs: f64) -> String {
+pub(crate) fn format_eta(secs: f64) -> String {
     if !secs.is_finite() || secs <= 0.0 {
         return String::from("--");
     }
@@ -142,11 +145,11 @@ fn open_folder(folder: &str) {
     let wide_dir = wide(folder);
     unsafe {
         let _ = ShellExecuteW(
-            None,
-            Some(w!("explore")),
-            Some(PCWSTR(wide_dir.as_ptr())),
-            None,
-            None,
+            HWND(std::ptr::null_mut()),
+            w!("explore"),
+            PCWSTR(wide_dir.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
             SW_SHOWNORMAL,
         );
     }
@@ -156,11 +159,11 @@ fn open_file(path: &str) {
     let wide_path = wide(path);
     unsafe {
         let _ = ShellExecuteW(
-            None,
-            Some(w!("open")),
-            Some(PCWSTR(wide_path.as_ptr())),
-            None,
-            None,
+            HWND(std::ptr::null_mut()),
+            w!("open"),
+            PCWSTR(wide_path.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
             SW_SHOWNORMAL,
         );
     }
@@ -515,7 +518,7 @@ fn maybe_auto_close_dashboard(app: &Arc<AppState>) {
         if let Ok(lock) = app.overlay_hwnd.lock() {
             if let Some(hwnd) = *lock {
                 let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::PostMessageW(
-                    hwnd,
+                    hwnd.0,
                     crate::app::WM_UI_CLOSE_DELAY,
                     windows::Win32::Foundation::WPARAM(0),
                     windows::Win32::Foundation::LPARAM(0),
@@ -583,11 +586,11 @@ fn run_elevated(app: &Arc<AppState>) {
 
     unsafe {
         let hr = ShellExecuteW(
-            None,
-            Some(w!("runas")),
-            Some(PCWSTR(exe_wide.as_ptr())),
-            Some(PCWSTR(args_wide.as_ptr())),
-            None,
+            HWND(std::ptr::null_mut()),
+            w!("runas"),
+            PCWSTR(exe_wide.as_ptr()),
+            PCWSTR(args_wide.as_ptr()),
+            PCWSTR::null(),
             SW_SHOWNORMAL,
         )
         .0 as isize;
@@ -816,10 +819,10 @@ fn tray_menu(hwnd: HWND, app: &Arc<AppState>) {
         let check = |on: bool| if on { MF_CHECKED } else { MF_UNCHECKED };
 
         let _ = AppendMenuW(menu, MF_STRING, TRAY_SHOW, w!("Show Progress"));
-        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(menu, MF_STRING, TRAY_PAUSE, w!("Pause / Resume Current Job"));
         let _ = AppendMenuW(menu, MF_STRING, TRAY_CANCEL, w!("Cancel Current Job"));
-        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(
             menu,
             MF_STRING | check(hotkeys),
@@ -838,9 +841,9 @@ fn tray_menu(hwnd: HWND, app: &Arc<AppState>) {
             TRAY_AUTOCLOSE,
             w!("Auto-close Dashboard on Success"),
         );
-        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(menu, MF_STRING, TRAY_LOG_DIR, w!("Open Logs Folder"));
-        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(menu, MF_STRING, TRAY_QUIT, w!("Exit BetterCopy"));
 
         let cmd = TrackPopupMenu(
@@ -923,7 +926,7 @@ fn add_tray_icon(app: &Arc<AppState>) -> bool {
         let tray_hwnd = {
             match app.tray_hwnd.lock() {
                 Ok(g) => match *g {
-                    Some(h) => h,
+                    Some(h) => h.0,
                     None => return false,
                 },
                 Err(_) => return false,
@@ -936,7 +939,7 @@ fn add_tray_icon(app: &Arc<AppState>) -> bool {
         nid.uID = TRAY_ID;
         nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
         nid.uCallbackMessage = crate::app::WM_TRAY_CALLBACK;
-        nid.hIcon = LoadIconW(None, windows::Win32::UI::WindowsAndMessaging::IDI_APPLICATION)
+        nid.hIcon = LoadIconW(HINSTANCE(std::ptr::null_mut()), windows::Win32::UI::WindowsAndMessaging::IDI_APPLICATION)
             .unwrap_or(windows::Win32::UI::WindowsAndMessaging::HICON(std::ptr::null_mut()));
         let tip = wide("BetterCopy — copy & delete helper");
         let copy_len = tip.len().min(nid.szTip.len() - 1);
@@ -958,7 +961,7 @@ fn remove_tray_icon(app: &Arc<AppState>) {
         };
         let mut nid = NOTIFYICONDATAW::default();
         nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-        nid.hWnd = tray_hwnd;
+        nid.hWnd = tray_hwnd.0;
         nid.uID = TRAY_ID;
         let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
     }
@@ -1097,12 +1100,12 @@ fn main() {
 
     let overlay = crate::overlay::Overlay::create(module_instance());
     if let Ok(mut lock) = app.overlay_hwnd.lock() {
-        *lock = Some(overlay.hwnd);
+        *lock = Some(crate::app::SafeHwnd(overlay.hwnd));
     }
 
     let tray_hwnd = create_tray_host();
     if let Ok(mut lock) = app.tray_hwnd.lock() {
-        *lock = Some(tray_hwnd);
+        *lock = Some(crate::app::SafeHwnd(tray_hwnd));
     }
     let _ = add_tray_icon(&app);
 
