@@ -14,7 +14,7 @@ use windows::Win32::Storage::FileSystem::{
     CopyFileExW, CreateFileW, MoveFileExW, SetFileAttributesW, SetFileTime,
     FILE_FLAGS_AND_ATTRIBUTES, LPPROGRESS_ROUTINE_CALLBACK_REASON, MOVEFILE_COPY_ALLOWED,
     MOVEFILE_WRITE_THROUGH, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
+    FILE_SHARE_WRITE,
 };
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard};
 use windows::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS, ES_SYSTEM_REQUIRED};

@@ -33,15 +33,21 @@ jobs:
         run: |
           cargo build --release -p better_copy_core -p bcopy 2>&1 | ForEach-Object { "::notice::$_"; $_ } | Write-Host
           $out = cargo build --release -p better_copy_native 2>&1 | Out-String
+          Set-Content -LiteralPath "$env:GITHUB_WORKSPACE\build.log" -Value $out
           Write-Host $out
           if ($LASTEXITCODE -ne 0) {
             $lines = $out -split "`n"
             $capture = 0
+            $current_error = ""
             foreach ($line in $lines) {
-              if ($line -match '^\s*error' -or $line -match '^\s*-->') { $capture = 8 }
-              if ($capture -gt 0) {
+              if ($line -match '^\s*error(\[|:)') {
                 $clean = $line -replace "\x1b\[[0-9;]*m",""
                 "::error::$clean"
+                $capture = 12
+              } elseif ($capture -gt 0 -and $line -match '\S') {
+                $clean = $line -replace "\x1b\[[0-9;]*m",""
+                $clean = $clean -replace '^\s*\|?\s*',''
+                if ($clean -ne '') { "::error::$clean" }
                 $capture--
               }
             }
@@ -49,3 +55,10 @@ jobs:
           }
       - name: Run engine integration tests
         run: cargo test -p better_copy_core --release
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: ${{ github.workspace }}/build.log
+          if-no-files-found: ignore

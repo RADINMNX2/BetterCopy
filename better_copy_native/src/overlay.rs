@@ -329,7 +329,7 @@ impl Overlay {
     pub fn create(instance: HINSTANCE) -> Overlay {
         unsafe {
             let wc = WNDCLASSW {
-                lpfnWndProc: Some(overlay_wnd_proc),
+                lpfnWndProc: overlay_wnd_proc,
                 hInstance: instance,
                 lpszClassName: class_name(),
                 ..Default::default()
