@@ -3,67 +3,91 @@
 use std::fs;
 use std::os::windows::fs::MetadataExt;
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use better_copy_core::engine::{run_engine, EngineSummary};
+use better_copy_core::profiler::profile_device;
 use better_copy_core::walker::{build_work_list, ensure_long_path};
 
+fn write_tree(root: &PathBuf, files: usize, dirs: usize, size: usize) -> PathBuf {
+    fs::create_dir_all(root).unwrap();
+    let blob: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+    for d in 0..dirs {
+        let dir_path = root.join(format!("dir{d:02}"));
+        fs::create_dir_all(&dir_path).unwrap();
+        for f in 0..files {
+            let needle = format!("{d:02}_{f:03}");
+            let data = [blob.as_slice(), needle.as_bytes()].concat();
+            fs::write(dir_path.join(format!("file_{needle}.bin")), &data).unwrap();
+        }
+    }
+    root.to_path_buf()
+}
+
+fn list_tree(root: &std::path::Path) -> Vec<String> {
+    let mut out = Vec::new();
+    fn walk(p: &std::path::Path, out: &mut Vec<String>) {
+        if let Ok(rd) = fs::read_dir(p) {
+            for e in rd.flatten() {
+                out.push(e.path().display().to_string());
+                if e.path().is_dir() {
+                    walk(&e.path(), out);
+                }
+            }
+        }
+    }
+    walk(root, &mut out);
+    out
+}
+
 #[test]
-fn debug_build_work_list_stats() {
-    let root = std::env::temp_dir().join(format!("bc_debug_{}", std::process::id()));
+fn debug_full_pipeline() {
+    let root = std::env::temp_dir().join(format!("bc_debug2_{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
-    let src = root.join("src");
+    let src = write_tree(&root.join("src"), 5, 3, 1024 * 4 + 7);
     let dest = root.join("dest");
-    fs::create_dir_all(&src).unwrap();
     fs::create_dir_all(&dest).unwrap();
-    fs::create_dir_all(&src.join("dir00")).unwrap();
-    for f in 0..3 {
-        fs::write(src.join("dir00").join(format!("file_{f}.bin")), vec![7u8; 1024]).unwrap();
-    }
 
-    let src_long = ensure_long_path(&src);
+    println!("=== profile_device(dest) ===");
+    println!("{:?}", profile_device(&dest));
+
     let cancel = Arc::new(AtomicBool::new(false));
+    let pause = Arc::new(AtomicBool::new(false));
 
-    println!("--- path diagnostics ---");
-    println!("raw src: {}", src.display());
-    println!("long src: {}", src_long.display());
-    println!("raw_temp: {}", std::env::temp_dir().display());
-
-    match fs::symlink_metadata(&src_long) {
-        Ok(m) => println!("long metadata OK is_dir={} attr={:x}", m.is_dir(), m.file_attributes()),
-        Err(e) => println!("long metadata ERR: {e}"),
-    }
-    match fs::symlink_metadata(&src) {
-        Ok(m) => println!("raw metadata OK is_dir={} attr={:x}", m.is_dir(), m.file_attributes()),
-        Err(e) => println!("raw metadata ERR: {e}"),
-    }
-    match fs::read_dir(&src_long) {
-        Ok(rd) => {
-            let n = rd.count();
-            println!("read_dir(long) entries = {n}");
-        }
-        Err(e) => println!("read_dir(long) ERR: {e}"),
-    }
-    match fs::read_dir(&src) {
-        Ok(rd) => {
-            let n = rd.count();
-            println!("read_dir(raw) entries = {n}");
-        }
-        Err(e) => println!("read_dir(raw) ERR: {e}"),
-    }
-
+    println!("=== build_work_list direct ===");
     match build_work_list(&[src.clone()], &dest, Some(&cancel), None) {
         Ok(wl) => println!(
-            "work list OK dirs={} small={} large={} total_files={} skipped={}",
+            "dirs={} small={} large={} total_files={}",
             wl.dirs.len(),
             wl.small_files.len(),
             wl.large_files.len(),
-            wl.total_files,
-            wl.skipped_links.len()
+            wl.total_files
         ),
-        Err(e) => println!("work list ERR: {e}"),
+        Err(e) => println!("ERR: {e}"),
     }
+
+    println!("=== run_engine full ===");
+    let s: EngineSummary = run_engine(
+        &[src.clone()],
+        &dest,
+        false,
+        None,
+        cancel.clone(),
+        pause,
+        true,
+        None,
+    );
+    println!("files_copied={} bytes={} failures={} cancelled={}", s.files_copied, s.bytes_copied, s.failures.len(), s.was_cancelled);
+    for (p, m) in &s.failures {
+        println!("  FAIL {} => {}", p.display(), m);
+    }
+    println!("=== dest tree ===");
+    for p in list_tree(&dest) {
+        println!("  {}", p);
+    }
+    println!("=== src still exists? {} ===", src.exists());
 
     let _ = fs::remove_dir_all(&root);
 }
