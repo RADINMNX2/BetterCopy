@@ -64,7 +64,7 @@ jobs:
         "=== bcopy ==="
         Get-Item "target\release\bcopy.exe" | Select-Object FullName, Length
         "=== bundles ==="
-        Get-ChildItem "better_copy_gui\src-tauri\target\release\bundle\" -Recurse -File | Select-Object FullName, Length
+        Get-ChildItem "target\release\bundle\" -Recurse -File | Select-Object FullName, Length
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4.3.3
@@ -72,7 +72,7 @@ jobs:
         name: BetterCopy-windows
         path: |
           target\release\bcopy.exe
-          better_copy_gui\src-tauri\target\release\bundle\
+          target\release\bundle\
         compression-level: 0
 
     - name: Create GitHub Release
@@ -83,7 +83,7 @@ jobs:
       run: |
         $files = @()
         $files += "target\release\bcopy.exe"
-        $files += @(Get-ChildItem "better_copy_gui\src-tauri\target\release\bundle\" -Recurse -File | ForEach-Object { $_.FullName })
+        $files += @(Get-ChildItem "target\release\bundle\" -Recurse -File | ForEach-Object { $_.FullName })
         if ($files.Count -eq 0) { Write-Error "No release assets found"; exit 1 }
         $release = gh release create $env:TAG $files --repo ${{ github.repository }} --title "BetterCopy build ${{ github.run_id }}" --notes "Automated build of BetterCopy (CLI bcopy + Tauri GUI) for Windows." --latest
         Write-Host "Release created: $release"
