@@ -42,11 +42,12 @@ jobs:
     - name: Install tauri-cli
       run: cargo install tauri-cli --locked
 
-    - name: Patch tauri.conf.json for schema compat
+    - name: Patch tauri.conf.json for bundle
       shell: pwsh
       run: |
         $p = "better_copy_gui\src-tauri\tauri.conf.json"
         $json = Get-Content $p -Raw | ConvertFrom-Json
+        $json.identifier = "com.radinmnx2.bettercopy"
         $json.bundle.PSObject.Properties.Remove("android")
         $json | ConvertTo-Json -Depth 20 | Set-Content $p -Encoding utf8
         Get-Content $p
