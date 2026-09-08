@@ -31,10 +31,21 @@ jobs:
       - name: Build core, CLI and native dashboard
         shell: pwsh
         run: |
-          cargo build --release -p bcopy -p better_copy_core 2>&1 | Write-Host
-          cargo build --release -p better_copy_native 2>&1 | ForEach-Object {
-            if ($_ -match 'error') { "::error::$_" }
-            $_ 
-          } | Write-Host
+          cargo build --release -p better_copy_core -p bcopy 2>&1 | ForEach-Object { "::notice::$_"; $_ } | Write-Host
+          $out = cargo build --release -p better_copy_native 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) {
+            $lines = $out -split "`n"
+            $capture = 0
+            foreach ($line in $lines) {
+              if ($line -match '^\s*error' -or $line -match '^\s*-->') { $capture = 8 }
+              if ($capture -gt 0) {
+                $clean = $line -replace "\x1b\[[0-9;]*m",""
+                "::error::$clean"
+                $capture--
+              }
+            }
+            exit 1
+          }
       - name: Run engine integration tests
         run: cargo test -p better_copy_core --release

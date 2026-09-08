@@ -10,9 +10,9 @@ use windows::Win32::Graphics::Gdi::{
     SetBkMode, SetTextColor, TRANSPARENT, DRAW_TEXT_FORMAT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetSystemMetrics, KillTimer, RegisterClassW, ShowWindow,
-    SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, WNDCLASSW, WNDPROC, WS_CLIPCHILDREN,
-    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, GetSystemMetrics, HMENU, KillTimer, RegisterClassW,
+    ShowWindow, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, WNDCLASSW, WNDPROC,
+    WS_CLIPCHILDREN, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
 use crate::app::{APP, UiMode};
@@ -350,8 +350,8 @@ impl Overlay {
                 y,
                 OVL_W,
                 OVL_H,
-                None,
-                None,
+                HWND(std::ptr::null_mut()),
+                HMENU(std::ptr::null_mut()),
                 instance,
                 None,
             )

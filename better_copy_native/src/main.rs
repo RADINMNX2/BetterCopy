@@ -986,7 +986,7 @@ fn create_tray_host() -> HWND {
             0,
             0,
             HWND_MESSAGE,
-            None,
+            HMENU(std::ptr::null_mut()),
             module_instance(),
             None,
         )
