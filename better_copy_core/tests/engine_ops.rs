@@ -62,7 +62,7 @@ fn summarize(root: &Path) -> Vec<(PathBuf, u64)> {
     }
     for entry in fs::read_dir(root).unwrap().flatten() {
         if entry.path().is_dir() {
-            walk(&entry.path(), &entry.path(), out);
+            walk(&entry.path(), &entry.path(), &mut out);
         }
     }
     out.sort();
