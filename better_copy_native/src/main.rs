@@ -19,10 +19,11 @@ use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, GetCursorPos,
+    AppendMenuW,
     GetMessageW, HMENU, HWND_MESSAGE, LoadIconW, MF_CHECKED, MF_SEPARATOR, MF_STRING,
     MF_UNCHECKED, MSG, NIF_ICON, NIF_MESSAGE, NIF_TIP, NOTIFYICONDATAW, PostQuitMessage,
-    RegisterClassW, Shell_NotifyIconW, TrackPopupMenu, TranslateMessage, WNDCLASSW,
-    NIM_ADD, NIM_DELETE, NIM_SETVERSION, NOTIFYICON_VERSION_4,
+    RegisterClassW, Shell_NotifyIconW, SW_SHOWNORMAL, TrackPopupMenu, TranslateMessage,
+    WNDCLASSW, NIM_ADD, NIM_DELETE, NIM_SETVERSION, NOTIFYICON_VERSION_4,
 };
 
 use crate::app::{APP, AppState, JobSpec, UiMode, UiView};

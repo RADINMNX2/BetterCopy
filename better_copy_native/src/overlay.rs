@@ -287,7 +287,7 @@ unsafe extern "system" fn overlay_wnd_proc(
 
     match msg {
         crate::app::WM_UI_REFRESH => {
-            let _ = InvalidateRect(hwnd, None, false);
+            let _ = InvalidateRect(hwnd, None, BOOL(0));
             LRESULT(0)
         }
         crate::app::WM_UI_CLOSE_DELAY => {
@@ -365,7 +365,7 @@ impl Overlay {
 pub fn show(hwnd: HWND) {
     unsafe {
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-        let _ = InvalidateRect(hwnd, None, false);
+        let _ = InvalidateRect(hwnd, None, BOOL(0));
     }
     if let Some(app) = APP.get() {
         app.set_overlay_visible(true);

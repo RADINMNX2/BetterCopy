@@ -12,7 +12,7 @@ use windows::core::PCWSTR;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, FILETIME};
 use windows::Win32::Storage::FileSystem::{
     CopyFileExW, CreateFileW, MoveFileExW, SetFileAttributesW, SetFileTime,
-    FILE_ATTRIBUTE_FLAGS, LPPROGRESS_ROUTINE_CALLBACK_REASON, MOVEFILE_COPY_ALLOWED,
+    FILE_FLAGS_AND_ATTRIBUTES, LPPROGRESS_ROUTINE_CALLBACK_REASON, MOVEFILE_COPY_ALLOWED,
     MOVEFILE_WRITE_THROUGH, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ,
     FILE_SHARE_WRITE, FILE_WRITE_ATTRIBUTES,
 };
@@ -211,7 +211,7 @@ fn set_file_times(path: &Path, creation: u64, access: u64, write_time: u64) -> R
 fn apply_file_metadata(item: &crate::walker::CopyItem) -> Result<(), String> {
     let attrs = item.attributes & FILE_METADATA_MASK;
     unsafe {
-        let _ = SetFileAttributesW(PCWSTR(item.dest_wide.as_ptr()), FILE_ATTRIBUTE_FLAGS(attrs));
+        let _ = SetFileAttributesW(PCWSTR(item.dest_wide.as_ptr()), FILE_FLAGS_AND_ATTRIBUTES(attrs));
     }
     set_file_times(&item.dest_path, item.creation_time, item.last_access_time, item.last_write_time)
 }
