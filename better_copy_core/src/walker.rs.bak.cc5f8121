@@ -180,11 +180,7 @@ pub fn build_work_list(
             }
         }
         let src_long = ensure_long_path(source);
-        let metadata = match fs::symlink_metadata(&src_long) {
-            Ok(m) => m,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(e),
-        };
+        let metadata = fs::symlink_metadata(&src_long)?;
         let file_attr = metadata.file_attributes();
 
         // Skip reparse points at root and log them
@@ -197,11 +193,7 @@ pub fn build_work_list(
             Some(name) => name,
             None => continue, // Skip root drive paths like C:\ which don't have a filename component
         };
-        let mut target_dest = if metadata.is_dir() {
-            dest_root_long.clone()
-        } else {
-            dest_root_long.join(file_name)
-        };
+        let mut target_dest = dest_root_long.join(file_name);
 
         // Resolve self-copy and name collisions with already planned destinations
         let mut counter = 1;

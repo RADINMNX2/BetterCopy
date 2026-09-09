@@ -264,6 +264,7 @@ fn copy_file_win32(
 
     if result.is_ok() {
         let _ = apply_file_metadata(item);
+        global_state.files_completed.fetch_add(1, Ordering::SeqCst);
         return Ok(());
     }
 
@@ -277,7 +278,13 @@ fn copy_file_win32(
                 &global_state.pause_flag,
                 global_state.resilience_timeout,
             ) {
-                return do_copy(&item.src_wide, &item.dest_wide, item.size, global_state);
+                let retry = do_copy(&item.src_wide, &item.dest_wide, item.size, global_state);
+                if retry.is_ok() {
+                    let _ = apply_file_metadata(item);
+                    global_state.files_completed.fetch_add(1, Ordering::SeqCst);
+                    return Ok(());
+                }
+                return retry;
             }
             return Err(format!(
                 "Destination volume unavailable and did not return within {}s: {}",
@@ -346,12 +353,17 @@ pub fn run_engine(
             unsafe {
                 let _ = SetThreadExecutionState(ES_CONTINUOUS);
             }
+            let cancelled = e.kind() == std::io::ErrorKind::Interrupted || cancel_flag.load(Ordering::Relaxed);
             return EngineSummary {
                 files_copied: 0,
                 bytes_copied: 0,
                 elapsed: start_time.elapsed(),
-                failures: vec![(dest.to_path_buf(), format!("Failed to build work list: {}", e))],
-                was_cancelled: e.kind() == std::io::ErrorKind::Interrupted || cancel_flag.load(Ordering::Relaxed),
+                failures: if cancelled {
+                    vec![]
+                } else {
+                    vec![(dest.to_path_buf(), format!("Failed to build work list: {}", e))]
+                },
+                was_cancelled: cancelled,
             };
         }
     };
@@ -490,7 +502,6 @@ pub fn run_engine_with_work_list(
                     } else {
                         let err = res.err().map(|e| e.to_string()).unwrap_or_else(|| "Move error".to_string());
                         global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), err));
-                        global_state.files_completed.fetch_add(1, Ordering::SeqCst);
                     }
                 }
             }
@@ -513,7 +524,6 @@ pub fn run_engine_with_work_list(
                 } else {
                     let err = res.err().map(|e| e.to_string()).unwrap_or_else(|| "Move error".to_string());
                     global_state.failed_files.lock().unwrap_or_else(|e| e.into_inner()).push((item.src_path.clone(), err));
-                    global_state.files_completed.fetch_add(1, Ordering::SeqCst);
                 }
             }
         }
@@ -692,8 +702,7 @@ pub fn run_engine_with_work_list(
     }
 
     let completed = global_state.files_completed.load(Ordering::Relaxed);
-    let total_failed = failures.len();
-    let files_copied = if completed >= total_failed { completed - total_failed } else { 0 };
+    let files_copied = completed;
 
     EngineSummary {
         files_copied,
