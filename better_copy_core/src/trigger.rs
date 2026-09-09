@@ -35,19 +35,34 @@ use windows::Win32::UI::Shell::{
     SWFO_NEEDDISPATCH
 };
 use windows::Win32::System::DataExchange::{
-    OpenClipboard, CloseClipboard, GetClipboardData, IsClipboardFormatAvailable,
-    RegisterClipboardFormatW
+    OpenClipboard, CloseClipboard, EmptyClipboard, GetClipboardData,
+    IsClipboardFormatAvailable, RegisterClipboardFormatW, SetClipboardData
 };
-use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+use windows::Win32::System::Memory::{
+    GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock, GMEM_MOVEABLE
+};
 use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 
 const SID_S_TOP_LEVEL_BROWSER: GUID = GUID::from_u128(0x4C96BE40_915C_11CF_99D3_00AA004AE837);
-const PASTE_HOTKEY_ID: i32 = 1;
-const DELETE_HOTKEY_ID: i32 = 2;
+const COPY_HOTKEY_ID: i32 = 1;
+const CUT_HOTKEY_ID: i32 = 2;
+const PASTE_HOTKEY_ID: i32 = 3;
+const DELETE_HOTKEY_ID: i32 = 4;
 const MSG_RE_REGISTER: u32 = WM_USER + 1;
 const CSIDL_DESKTOP: i32 = 0;
 
+// Virtual key codes for the standard shortcuts we take over.
+const VK_C: u16 = 0x43;
+const VK_X: u16 = 0x58;
+const VK_V: u16 = 0x56;
+const VK_DELETE: u16 = 0x2E;
+const VK_CONTROL: u16 = 0x11;
+const VK_SHIFT: u16 = 0x10;
+const CF_HDROP: u32 = 15;
+
 thread_local! {
+    static COPY_REGISTERED: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    static CUT_REGISTERED: std::cell::Cell<bool> = std::cell::Cell::new(false);
     static PASTE_REGISTERED: std::cell::Cell<bool> = std::cell::Cell::new(false);
     static DELETE_REGISTERED: std::cell::Cell<bool> = std::cell::Cell::new(false);
     static WINDOW_HWND: std::cell::Cell<HWND> = std::cell::Cell::new(HWND::default());
@@ -66,21 +81,7 @@ pub enum HotkeyEvent {
         clipboard: ClipboardSources,
         destination: PathBuf,
     },
-    Delete {
-        sources: Vec<PathBuf>,
-    },
-}
-
-/// Reads CF_HDROP and Preferred DropEffect from the clipboard.
-pub fn read_clipboard_sources() -> Result<ClipboardSources, String> {
-    unsafe {
-        if OpenClipboard(None).is_err() {
-            return Err("Failed to open clipboard".to_string());
-        }
-        
-        let file_format_available = IsClipboardFormatAvailable(15).is_ok();
-            
-        if !file_format_available {
+    De                let h_drop_data = match GetClipboardData(CF_HDROP) {
             let _ = CloseClipboard();
             return Err("Clipboard does not contain files".to_string());
         }
@@ -138,6 +139,92 @@ pub fn read_clipboard_sources() -> Result<ClipboardSources, String> {
             Err("No file paths found in clipboard".to_string())
         } else {
             Ok(ClipboardSources { paths, is_move })
+        }
+    }
+}
+
+/// Writes the given paths to the clipboard as CF_HDROP plus the Preferred
+/// DropEffect marker (1 = copy, 2 = cut/move). Explorer-compatible payload.
+pub fn write_clipboard_paths(paths: &[PathBuf], is_move: bool) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("No paths to write to clipboard".to_string());
+    }
+
+    // Build the DROPFILES payload manually: 20-byte header then a list of
+    // double-null-terminated UTF-16 file paths.
+    let mut data: Vec<u8> = Vec::new();
+    data.extend_from_slice(&20u32.to_le_bytes()); // pFiles: offset of the file list
+    data.extend_from_slice(&0i64.to_le_bytes());  // pt: POINT (0, 0)
+    data.extend_from_slice(&0u32.to_le_bytes());  // fNC: not a native clipboard
+    data.extend_from_slice(&1u32.to_le_bytes());  // fWide: UTF-16 paths
+
+    for path in paths {
+        for unit in path.as_os_str().encode_wide() {
+            data.extend_from_slice(&unit.to_le_bytes());
+        }
+        data.extend_from_slice(&0u16.to_le_bytes());
+    }
+    data.extend_from_slice(&0u16.to_le_bytes()); // final terminator
+
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return Err("Failed to open clipboard".to_string());
+        }
+        let _ = EmptyClipboard();
+
+        let mut ok = true;
+        let h_drop = match GlobalAlloc(GMEM_MOVEABLE, data.len()) {
+            Ok(h) if !h.0.is_null() => h,
+            _ => {
+                ok = false;
+                HGLOBAL(std::ptr::null_mut())
+            }
+        };
+        if ok {
+            let ptr = GlobalLock(h_drop);
+            if !ptr.is_null() {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), ptr as *mut u8, data.len());
+                let _ = GlobalUnlock(h_drop);
+                if SetClipboardData(CF_HDROP, h_drop.0).is_err() {
+                    ok = false;
+                }
+            } else {
+                ok = false;
+            }
+            if !ok {
+                let _ = GlobalFree(h_drop);
+            }
+        }
+
+        if ok {
+            let effect: u32 = if is_move { 2 } else { 1 };
+            let effect_name: Vec<u16> = "Preferred DropEffect".encode_utf16().chain(std::iter::once(0)).collect();
+            let format_id = RegisterClipboardFormatW(PCWSTR(effect_name.as_ptr()));
+            if format_id != 0 {
+                let h_effect = GlobalAlloc(GMEM_MOVEABLE, std::mem::size_of::<u32>());
+                if let Ok(h) = h_effect {
+                    if !h.0.is_null() {
+                        let ptr = GlobalLock(h);
+                        if !ptr.is_null() {
+                            std::ptr::copy_nonoverlapping(&effect, ptr as *mut u32, 1);
+                            let _ = GlobalUnlock(h);
+                            if SetClipboardData(format_id, h.0).is_err() {
+                                let _ = GlobalFree(h);
+                            }
+                        } else {
+                            let _ = GlobalFree(h);
+                        }
+                    }
+                }
+            }
+        }
+
+        let _ = CloseClipboard();
+
+        if ok {
+            Ok(())
+        } else {
+            Err("Failed to write files to clipboard".to_string())
         }
     }
 }
@@ -330,41 +417,41 @@ fn is_explorer_or_desktop(hwnd: HWND) -> bool {
     }
 }
 
-/// Dynamically updates the hotkey registration state.
+/// Dynamically updates the hotkey registration state. The standard copy/cut/
+/// paste shortcuts are intercepted only while Explorer or the Desktop has
+/// focus, so other applications are never affected.
 fn update_hotkey_registration(hwnd: HWND, force_unregister: bool) {
     unsafe {
         let fg = GetForegroundWindow();
         let eligible = !force_unregister && is_explorer_or_desktop(fg);
-        
-        PASTE_REGISTERED.with(|reg| {
-            let currently_registered = reg.get();
-            if eligible && !currently_registered {
-                let res = RegisterHotKey(hwnd, PASTE_HOTKEY_ID, MOD_CONTROL | MOD_SHIFT, 0x56); // 'V'
-                println!("[Trigger] Registering paste hotkey: Result={:?}", res);
-                if res.is_ok() {
-                    reg.set(true);
-                }
-            } else if !eligible && currently_registered {
-                let res = UnregisterHotKey(hwnd, PASTE_HOTKEY_ID);
-                println!("[Trigger] Unregistering paste hotkey: Result={:?}", res);
-                reg.set(false);
-            }
-        });
 
-        DELETE_REGISTERED.with(|reg| {
-            let currently_registered = reg.get();
-            if eligible && !currently_registered {
-                let res = RegisterHotKey(hwnd, DELETE_HOTKEY_ID, MOD_CONTROL | MOD_SHIFT, 0x2E); // VK_DELETE (0x2E)
-                println!("[Trigger] Registering delete hotkey: Result={:?}", res);
-                if res.is_ok() {
-                    reg.set(true);
-                }
-            } else if !eligible && currently_registered {
-                let res = UnregisterHotKey(hwnd, DELETE_HOTKEY_ID);
-                println!("[Trigger] Unregistering delete hotkey: Result={:?}", res);
-                reg.set(false);
-            }
-        });
+        macro_rules! manage_hotkey {
+            ($id:expr, $mods:expr, $vk:expr, $reg:ident) => {{
+                $reg.with(|reg| {
+                    let currently_registered = reg.get();
+                    if eligible && !currently_registered {
+                        let res = RegisterHotKey(hwnd, $id, $mods, $vk);
+                        println!("[Trigger] Registering hotkey {:?}: Result={:?}", $id, res);
+                        if res.is_ok() {
+                            reg.set(true);
+                        }
+                    } else if !eligible && currently_registered {
+                        let res = UnregisterHotKey(hwnd, $id);
+                        println!("[Trigger] Unregistering hotkey {:?}: Result={:?}", $id, res);
+                        reg.set(false);
+                    }
+                });
+            }};
+        }
+
+        // Ctrl+C: capture the Explorer selection onto our clipboard.
+        manage_hotkey!(COPY_HOTKEY_ID, MOD_CONTROL, VK_C, COPY_REGISTERED);
+        // Ctrl+X: capture the Explorer selection as a cut/move.
+        manage_hotkey!(CUT_HOTKEY_ID, MOD_CONTROL, VK_X, CUT_REGISTERED);
+        // Ctrl+V: paste with the BetterCopy engine.
+        manage_hotkey!(PASTE_HOTKEY_ID, MOD_CONTROL, VK_V, PASTE_REGISTERED);
+        // Ctrl+Shift+Delete: parallel delete of the selection.
+        manage_hotkey!(DELETE_HOTKEY_ID, MOD_CONTROL | MOD_SHIFT, VK_DELETE, DELETE_REGISTERED);
     }
 }
 
@@ -395,45 +482,62 @@ fn check_rename_box_focus(foreground_hwnd: HWND) -> bool {
     }
 }
 
-/// Replays a hotkey (Ctrl+Shift+V or Ctrl+Shift+Delete) to the system using SendInput.
-fn replay_hotkey(hwnd: HWND, hotkey_id: i32) {
+/// Replays the intercepted shortcut to the foreground application (used when
+/// focus is inside a rename/edit box, or when we decide not to handle the
+/// shortcut ourselves). The hotkey is temporarily unregistered so the replayed
+/// input reaches the app, then re-registered.
+fn replay_hotkey(hotkey_id: i32) {
+    let (vk, ctrl, shift) = match hotkey_id {
+        COPY_HOTKEY_ID => (VK_C, true, false),
+        CUT_HOTKEY_ID => (VK_X, true, false),
+        PASTE_HOTKEY_ID => (VK_V, true, false),
+        DELETE_HOTKEY_ID => (VK_DELETE, true, true),
+        _ => return,
+    };
     unsafe {
-        let vk = if hotkey_id == PASTE_HOTKEY_ID {
-            let _ = UnregisterHotKey(hwnd, PASTE_HOTKEY_ID);
-            PASTE_REGISTERED.with(|reg| reg.set(false));
-            0x56 // 'V'
-        } else if hotkey_id == DELETE_HOTKEY_ID {
-            let _ = UnregisterHotKey(hwnd, DELETE_HOTKEY_ID);
-            DELETE_REGISTERED.with(|reg| reg.set(false));
-            0x2E // VK_DELETE
-        } else {
-            return;
-        };
-        
-        let mut inputs = [INPUT::default(); 2];
-        
-        // Key Down
-        inputs[0].r#type = INPUT_KEYBOARD;
-        inputs[0].Anonymous.ki = KEYBDINPUT {
-            wVk: VIRTUAL_KEY(vk),
-            wScan: 0,
-            dwFlags: KEYBD_EVENT_FLAGS(0),
-            time: 0,
-            dwExtraInfo: 0,
-        };
-        
-        // Key Up
-        inputs[1].r#type = INPUT_KEYBOARD;
-        inputs[1].Anonymous.ki = KEYBDINPUT {
-            wVk: VIRTUAL_KEY(vk),
-            wScan: 0,
-            dwFlags: KEYBD_EVENT_FLAGS(2), // KEYEVENTF_KEYUP
-            time: 0,
-            dwExtraInfo: 0,
-        };
-        
-        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-        
+        let hwnd = WINDOW_HWND.with(|w| w.get());
+        let _ = UnregisterHotKey(hwnd, hotkey_id);
+        match hotkey_id {
+            COPY_HOTKEY_ID => COPY_REGISTERED.with(|r| r.set(false)),
+            CUT_HOTKEY_ID => CUT_REGISTERED.with(|r| r.set(false)),
+            PASTE_HOTKEY_ID => PASTE_REGISTERED.with(|r| r.set(false)),
+            DELETE_HOTKEY_ID => DELETE_REGISTERED.with(|r| r.set(false)),
+            _ => {}
+        }
+
+        // Sequence: Ctrl down, [Shift down], Key down, Key up, [Shift up], Ctrl up.
+        let mut input_arr = [INPUT::default(); 6];
+        let mut n = 0usize;
+        macro_rules! push_key {
+            ($code:expr, $flags:expr) => {{
+                input_arr[n].r#type = INPUT_KEYBOARD;
+                input_arr[n].Anonymous.ki = KEYBDINPUT {
+                    wVk: VIRTUAL_KEY($code),
+                    wScan: 0,
+                    dwFlags: KEYBD_EVENT_FLAGS($flags),
+                    time: 0,
+                    dwExtraInfo: 0,
+                };
+                n += 1;
+            }};
+        }
+        if ctrl {
+            push_key!(VK_CONTROL, 0);
+        }
+        if shift {
+            push_key!(VK_SHIFT, 0);
+        }
+        push_key!(vk, 0); // key down
+        push_key!(vk, 2); // KEYEVENTF_KEYUP
+        if shift {
+            push_key!(VK_SHIFT, 2);
+        }
+        if ctrl {
+            push_key!(VK_CONTROL, 2);
+        }
+
+        SendInput(&input_arr[..n], std::mem::size_of::<INPUT>() as i32);
+
         let _ = PostMessageW(hwnd, MSG_RE_REGISTER, WPARAM(0), LPARAM(0));
     }
 }
@@ -481,7 +585,7 @@ unsafe extern "system" fn trigger_window_proc(
                     let fg = GetForegroundWindow();
                     if check_rename_box_focus(fg) {
                         println!("[Trigger] Focus is inside a rename/edit box, replaying native keys.");
-                        replay_hotkey(hwnd, hotkey_id);
+                        replay_hotkey(hotkey_id);
                     } else {
                         if let Some(cb_mutex) = TRIGGER_CALLBACK.get() {
                             let guard = cb_mutex.lock().unwrap_or_else(|e| e.into_inner());
@@ -527,36 +631,64 @@ impl HotkeyTrigger {
         // Wrap the user-facing callback to resolve clipboard or selection upon trigger
         let wrapped_cb = move |hotkey_id| {
             let fg = unsafe { GetForegroundWindow() };
-            if hotkey_id == PASTE_HOTKEY_ID {
-                let dest = match resolve_active_explorer_path(fg) {
-                    Ok(path) => path,
-                    Err(e) => {
-                        eprintln!("Trigger error (resolve path): {}", e);
+
+            match hotkey_id {
+                COPY_HOTKEY_ID | CUT_HOTKEY_ID => {
+                    let is_move = hotkey_id == CUT_HOTKEY_ID;
+                    let sources = match resolve_active_explorer_selection(fg) {
+                        Ok(paths) => paths,
+                        Err(e) => {
+                            eprintln!("Trigger error (resolve selection): {}", e);
+                            replay_hotkey(hotkey_id);
+                            return;
+                        }
+                    };
+                    if sources.is_empty() {
+                        // Nothing selected: hand the shortcut back to Explorer.
+                        replay_hotkey(hotkey_id);
                         return;
                     }
-                };
-                
-                let clipboard = match read_clipboard_sources() {
-                    Ok(sources) => sources,
-                    Err(e) => {
-                        eprintln!("Trigger error (read clipboard): {}", e);
-                        return;
+                    if let Err(e) = write_clipboard_paths(&sources, is_move) {
+                        eprintln!("Trigger error (write clipboard): {}", e);
+                        replay_hotkey(hotkey_id);
                     }
-                };
-                
-                trigger_callback(HotkeyEvent::Paste { clipboard, destination: dest });
-            } else if hotkey_id == DELETE_HOTKEY_ID {
-                let sources = match resolve_active_explorer_selection(fg) {
-                    Ok(paths) => paths,
-                    Err(e) => {
-                        eprintln!("Trigger error (resolve selection): {}", e);
-                        return;
-                    }
-                };
-                
-                if !sources.is_empty() {
-                    trigger_callback(HotkeyEvent::Delete { sources });
                 }
+                PASTE_HOTKEY_ID => {
+                    let dest = match resolve_active_explorer_path(fg) {
+                        Ok(path) => path,
+                        Err(e) => {
+                            eprintln!("Trigger error (resolve path): {}", e);
+                            return;
+                        }
+                    };
+
+                    let clipboard = match read_clipboard_sources() {
+                        Ok(sources) => sources,
+                        Err(e) => {
+                            // Clipboard holds no files (e.g. text) — let the
+                            // default Explorer paste behavior take over.
+                            eprintln!("Trigger error (read clipboard): {}", e);
+                            replay_hotkey(hotkey_id);
+                            return;
+                        }
+                    };
+
+                    trigger_callback(HotkeyEvent::Paste { clipboard, destination: dest });
+                }
+                DELETE_HOTKEY_ID => {
+                    let sources = match resolve_active_explorer_selection(fg) {
+                        Ok(paths) => paths,
+                        Err(e) => {
+                            eprintln!("Trigger error (resolve selection): {}", e);
+                            return;
+                        }
+                    };
+
+                    if !sources.is_empty() {
+                        trigger_callback(HotkeyEvent::Delete { sources });
+                    }
+                }
+                _ => {}
             }
         };
         

@@ -1,13 +1,15 @@
 use std::cell::RefCell;
 use std::sync::{Arc, Mutex as SyncMutex, OnceLock};
+use std::time::Instant;
 
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{BOOL, COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateSolidBrush, DEFAULT_GUI_FONT, DeleteObject, DrawTextW, DT_CENTER,
-    DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE, DT_VCENTER, EndPaint, FillRect, FrameRect,
-    GetStockObject, HDC, HGDIOBJ, InvalidateRect, PAINTSTRUCT, RoundRect, SelectObject,
-    SetBkMode, SetTextColor, TRANSPARENT, DRAW_TEXT_FORMAT,
+    BeginPaint, CreatePen, CreateSolidBrush, DEFAULT_GUI_FONT, DeleteObject, DrawTextW,
+    DT_CENTER, DT_END_ELLIPSIS, DT_LEFT, DT_SINGLELINE, DT_VCENTER, Ellipse, EndPaint,
+    FillRect, FrameRect, GetStockObject, HDC, HGDIOBJ, InvalidateRect, LineTo, MoveToEx,
+    PAINTSTRUCT, PS_SOLID, RoundRect, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    DRAW_TEXT_FORMAT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetSystemMetrics, HMENU, KillTimer, RegisterClassW,
@@ -55,6 +57,43 @@ struct Buttons {
 
 thread_local! {
     static BTN: RefCell<Buttons> = RefCell::new(Buttons::default());
+}
+
+/// Smoothed display values that ease toward the engine's last reported
+/// numbers, so progress/speed animate fluidly instead of stepping.
+struct SmoothState {
+    percent: f64,
+    speed: f64,
+    tick: Instant,
+}
+
+thread_local! {
+    static SMOOTH: RefCell<SmoothState> =
+        RefCell::new(SmoothState { percent: 0.0, speed: 0.0, tick: Instant::now() });
+    static SPEED_HIST: RefCell<Vec<f64>> = RefCell::new(Vec::new());
+}
+
+fn smooth_advance(target_pct: f64, target_speed: f64) -> (f64, f64) {
+    SMOOTH.with(|s| {
+        let mut st = s.borrow_mut();
+        let now = Instant::now();
+        let dt = now.duration_since(st.tick).as_secs_f64().min(0.1);
+        st.tick = now;
+
+        let k = 1.0 - (-7.0 * dt).exp();
+        st.percent += (target_pct - st.percent) * k;
+        if st.percent < 0.0 {
+            st.percent = 0.0;
+        }
+        if target_pct >= 100.0 && st.percent > 100.0 {
+            st.percent = 100.0;
+        }
+
+        let ks = 1.0 - (-4.0 * dt).exp();
+        st.speed += (target_speed - st.speed) * ks;
+
+        (st.percent, st.speed)
+    })
 }
 
 fn class_name() -> PCWSTR {
@@ -122,11 +161,80 @@ fn draw_button(hdc: HDC, rect: &RECT, label: &str, active: bool) {
     draw_text(hdc, label, &mut tr, fmt, rgb(235, 236, 240));
 }
 
+/// Draws a compact live speed line (scrolling samples, no labels) that gently
+/// reflects the throughput history as a smooth polyline.
+unsafe fn draw_speed_line(hdc: HDC, rect: &RECT) {
+    if let Ok(hist) = SPEED_HIST.try_borrow() {
+        let hist = hist.clone();
+        if hist.is_empty() {
+            return;
+        }
+
+        let w = (rect.right - rect.left).max(1) as f64;
+        let h = (rect.bottom - rect.top).max(1) as f64;
+        let mut max_s = 50.0_f64;
+        for &s in &hist {
+            if s > max_s {
+                max_s = s;
+            }
+        }
+
+        // Grid
+        let pen_grid = CreatePen(PS_SOLID, 1, rgb(58, 62, 72)).unwrap_or_default();
+        let old = SelectObject(hdc, pen_grid);
+        for i in 1..3 {
+            let y = rect.top + ((h * (i as f64) / 3.0)) as i32;
+            let _ = MoveToEx(hdc, rect.left, y, None);
+            let _ = LineTo(hdc, rect.right, y);
+        }
+        let _ = SelectObject(hdc, old);
+        let _ = DeleteObject(HGDIOBJ(pen_grid.0));
+
+        // Line
+        let pen = CreatePen(PS_SOLID, 2, rgb(56, 120, 255)).unwrap_or_default();
+        let old = SelectObject(hdc, pen);
+        let n = hist.len();
+        let last = (n - 1).max(1) as f64;
+        for i in 0..n {
+            let x = rect.left + (w * (i as f64) / last) as i32;
+            let y = rect.bottom - (h * (hist[i] / max_s)) as i32 - 2;
+            if i == 0 {
+                let _ = MoveToEx(hdc, x, y, None);
+            } else {
+                let _ = LineTo(hdc, x, y);
+            }
+        }
+        let _ = SelectObject(hdc, old);
+        let _ = DeleteObject(HGDIOBJ(pen.0));
+
+        // Leading dot
+        let x = rect.left + w as i32;
+        let y = rect.bottom - (h * (hist[n - 1] / max_s)) as i32 - 2;
+        let brush = CreateSolidBrush(rgb(110, 170, 255));
+        let old = SelectObject(hdc, brush);
+        let _ = Ellipse(hdc, x - 3, y - 3, x + 3, y + 3);
+        let _ = SelectObject(hdc, old);
+        let _ = DeleteObject(HGDIOBJ(brush.0));
+    }
+}
+
 unsafe fn paint(hdc: HDC) {
     let app_guard = crate::app::APP.get();
     let Some(app) = app_guard else { return };
     let ui = app.ui.lock().unwrap().clone();
     let is_paused = app.pause.load(std::sync::atomic::Ordering::SeqCst);
+
+    let (pct, smooth_speed) = smooth_advance(ui.percent(), ui.speed_mbps);
+    if !ui.is_delete {
+        SPEED_HIST.with(|s| {
+            let mut hist = s.borrow_mut();
+            hist.push(smooth_speed);
+            if hist.len() > 150 {
+                let drop = hist.len() - 150;
+                hist.drain(0..drop);
+            }
+        });
+    }
 
     fill_rect(hdc, &RECT { left: 0, top: 0, right: OVL_W, bottom: OVL_H }, rgb(28, 29, 33));
     frame_rect(hdc, &RECT { left: 0, top: 0, right: OVL_W - 1, bottom: OVL_H - 1 }, rgb(70, 74, 84));
@@ -144,7 +252,6 @@ unsafe fn paint(hdc: HDC) {
     // Progress bar
     let bar = RECT { left: 16, top: 104, right: OVL_W - 16, bottom: 122 };
     round_fill(hdc, &bar, rgb(45, 47, 54));
-    let pct = ui.percent();
     let fill_w = ((bar.right - bar.left) as f64 * pct / 100.0) as i32;
     if fill_w > 0 {
         let fill = RECT { left: bar.left, top: bar.top, right: bar.left + fill_w, bottom: bar.bottom };
@@ -165,7 +272,7 @@ unsafe fn paint(hdc: HDC) {
             "{:.1} / {:.1} MB · {:.1} MB/s · {}",
             mb_done,
             mb_total,
-            ui.speed_mbps,
+            smooth_speed,
             crate::format_eta(ui.eta_secs),
         )
     };
@@ -195,8 +302,16 @@ unsafe fn paint(hdc: HDC) {
     };
     draw_text(hdc, &status, &mut status_rect, DT_LEFT | DT_SINGLELINE, status_color);
 
+    // Live speed line
+    if !ui.is_delete {
+        let graph = RECT { left: 16, top: 200, right: OVL_W - 16, bottom: 220 };
+        round_fill(hdc, &graph, rgb(34, 36, 42));
+        draw_speed_line(hdc, &graph);
+        frame_rect(hdc, &graph, rgb(58, 62, 72));
+    }
+
     // Failure preview lines
-    let mut top = 202;
+    let mut top = 226;
     let failure_limit = ui.failures.iter().take(3).cloned().collect::<Vec<_>>();
     for (path, reason) in &failure_limit {
         if top > OVL_H - 76 {
@@ -293,7 +408,10 @@ unsafe extern "system" fn overlay_wnd_proc(
             LRESULT(0)
         }
         WM_TIMER => {
-            if wparam.0 as usize == 2 {
+            if wparam.0 as usize == 1 {
+                // ~30 FPS repaint driver for smooth progress/speed animation.
+                let _ = InvalidateRect(hwnd, None, BOOL(0));
+            } else if wparam.0 as usize == 2 {
                 let _ = KillTimer(hwnd, 2);
                 hide(hwnd);
             }
@@ -362,6 +480,7 @@ impl Overlay {
 
 pub fn show(hwnd: HWND) {
     unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::SetTimer(hwnd, 1, 33, None);
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         let _ = InvalidateRect(hwnd, None, BOOL(0));
     }
@@ -372,6 +491,7 @@ pub fn show(hwnd: HWND) {
 
 pub fn hide(hwnd: HWND) {
     unsafe {
+        let _ = windows::Win32::UI::WindowsAndMessaging::KillTimer(hwnd, 1);
         let _ = ShowWindow(hwnd, SW_HIDE);
     }
     if let Some(app) = APP.get() {

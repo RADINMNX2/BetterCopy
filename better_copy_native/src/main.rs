@@ -827,7 +827,7 @@ fn tray_menu(hwnd: HWND, app: &Arc<AppState>) {
             menu,
             MF_STRING | check(hotkeys),
             TRAY_HOTKEYS,
-            w!("Quick Keys (Ctrl+Shift+V / Ctrl+Shift+Del)"),
+            w!("Quick Keys (Ctrl+C / Ctrl+X / Ctrl+V / Ctrl+Shift+Del)"),
         );
         let _ = AppendMenuW(
             menu,
