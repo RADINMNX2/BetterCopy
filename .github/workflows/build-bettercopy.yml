@@ -39,6 +39,9 @@ jobs:
     - name: Build bcopy CLI
       run: cargo build --release -p bcopy
 
+    - name: Build native dashboard
+      run: cargo build --release -p better_copy_native
+
     - name: Install tauri-cli
       run: cargo install tauri-cli --locked
 
@@ -63,6 +66,8 @@ jobs:
       run: |
         "=== bcopy ==="
         Get-Item "target\release\bcopy.exe" | Select-Object FullName, Length
+        "=== native ==="
+        Get-Item "target\release\better_copy_native.exe" | Select-Object FullName, Length
         "=== bundles ==="
         Get-ChildItem "target\release\bundle\" -Recurse -File | Select-Object FullName, Length
 
@@ -72,6 +77,7 @@ jobs:
         name: BetterCopy-windows
         path: |
           target\release\bcopy.exe
+          target\release\better_copy_native.exe
           target\release\bundle\
         compression-level: 0
 
@@ -83,7 +89,8 @@ jobs:
       run: |
         $files = @()
         $files += "target\release\bcopy.exe"
+        $files += "target\release\better_copy_native.exe"
         $files += @(Get-ChildItem "target\release\bundle\" -Recurse -File | ForEach-Object { $_.FullName })
         if ($files.Count -eq 0) { Write-Error "No release assets found"; exit 1 }
-        $release = gh release create $env:TAG $files --repo ${{ github.repository }} --title "BetterCopy build ${{ github.run_id }}" --notes "Automated build of BetterCopy (CLI bcopy + Tauri GUI) for Windows." --latest
+        $release = gh release create $env:TAG $files --repo ${{ github.repository }} --title "BetterCopy build ${{ github.run_id }}" --notes "Automated build of BetterCopy (CLI bcopy, native tray dashboard and Tauri GUI) for Windows." --latest
         Write-Host "Release created: $release"
