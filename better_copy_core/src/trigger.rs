@@ -1,3 +1,4 @@
+use std::os::windows::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -6,7 +7,7 @@ use std::time::Duration;
 
 use windows::core::{Interface, PCWSTR, GUID, VARIANT};
 use windows::Win32::Foundation::{
-    HWND, LPARAM, WPARAM, LRESULT, HGLOBAL
+    GlobalFree, HANDLE, HGLOBAL, HWND, LPARAM, LRESULT, WPARAM
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, IServiceProvider,
@@ -39,8 +40,9 @@ use windows::Win32::System::DataExchange::{
     IsClipboardFormatAvailable, RegisterClipboardFormatW, SetClipboardData
 };
 use windows::Win32::System::Memory::{
-    GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock, GMEM_MOVEABLE
+    GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE
 };
+use windows::Win32::System::Ole::CF_HDROP;
 use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
 
 const SID_S_TOP_LEVEL_BROWSER: GUID = GUID::from_u128(0x4C96BE40_915C_11CF_99D3_00AA004AE837);
@@ -58,7 +60,6 @@ const VK_V: u16 = 0x56;
 const VK_DELETE: u16 = 0x2E;
 const VK_CONTROL: u16 = 0x11;
 const VK_SHIFT: u16 = 0x10;
-const CF_HDROP: u32 = 15;
 
 thread_local! {
     static COPY_REGISTERED: std::cell::Cell<bool> = std::cell::Cell::new(false);
@@ -81,16 +82,24 @@ pub enum HotkeyEvent {
         clipboard: ClipboardSources,
         destination: PathBuf,
     },
-    De                let h_drop_data = match GetClipboardData(CF_HDROP) {
-            let _ = CloseClipboard();
-            return Err("Clipboard does not contain files".to_string());
+    Delete {
+        sources: Vec<PathBuf>,
+    },
+}
+
+/// Reads the file paths and the copy/cut drop effect from the clipboard's
+/// CF_HDROP (drop effect 1 = copy, 2 = cut/move).
+pub fn read_clipboard_sources() -> Result<ClipboardSources, String> {
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return Err("Failed to open clipboard".to_string());
         }
-        
-        let h_drop_data = match GetClipboardData(15) {
+
+        let h_drop_data = match GetClipboardData(u32::from(CF_HDROP.0)) {
             Ok(h) if !h.0.is_null() => h,
             _ => {
                 let _ = CloseClipboard();
-                return Err("Failed to get clipboard data".to_string());
+                return Err("Clipboard does not contain files".to_string());
             }
         };
         
@@ -185,7 +194,7 @@ pub fn write_clipboard_paths(paths: &[PathBuf], is_move: bool) -> Result<(), Str
             if !ptr.is_null() {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), ptr as *mut u8, data.len());
                 let _ = GlobalUnlock(h_drop);
-                if SetClipboardData(CF_HDROP, h_drop.0).is_err() {
+                if SetClipboardData(u32::from(CF_HDROP.0), HANDLE(h_drop.0)).is_err() {
                     ok = false;
                 }
             } else {
@@ -208,7 +217,7 @@ pub fn write_clipboard_paths(paths: &[PathBuf], is_move: bool) -> Result<(), Str
                         if !ptr.is_null() {
                             std::ptr::copy_nonoverlapping(&effect, ptr as *mut u32, 1);
                             let _ = GlobalUnlock(h);
-                            if SetClipboardData(format_id, h.0).is_err() {
+                            if SetClipboardData(format_id, HANDLE(h.0)).is_err() {
                                 let _ = GlobalFree(h);
                             }
                         } else {
@@ -430,7 +439,7 @@ fn update_hotkey_registration(hwnd: HWND, force_unregister: bool) {
                 $reg.with(|reg| {
                     let currently_registered = reg.get();
                     if eligible && !currently_registered {
-                        let res = RegisterHotKey(hwnd, $id, $mods, $vk);
+                        let res = RegisterHotKey(hwnd, $id, $mods, $vk as u32);
                         println!("[Trigger] Registering hotkey {:?}: Result={:?}", $id, res);
                         if res.is_ok() {
                             reg.set(true);

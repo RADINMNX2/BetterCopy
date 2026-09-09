@@ -273,6 +273,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "better_copy_native"
+version = "0.1.0"
+dependencies = [
+ "better_copy_core",
+ "serde",
+ "serde_json",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -13,7 +13,7 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetSystemMetrics, HMENU, KillTimer, RegisterClassW,
-    ShowWindow, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, WNDCLASSW, WNDPROC,
+    ShowWindow, SM_CXSCREEN, SM_CYSCREEN, SW_HIDE, SW_SHOWNOACTIVATE, WNDCLASSW,
     WS_CLIPCHILDREN, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 
@@ -164,23 +164,22 @@ fn draw_button(hdc: HDC, rect: &RECT, label: &str, active: bool) {
 /// Draws a compact live speed line (scrolling samples, no labels) that gently
 /// reflects the throughput history as a smooth polyline.
 unsafe fn draw_speed_line(hdc: HDC, rect: &RECT) {
-    if let Ok(hist) = SPEED_HIST.try_borrow() {
-        let hist = hist.clone();
-        if hist.is_empty() {
-            return;
-        }
+    let hist: Vec<f64> = SPEED_HIST.with(|s| s.borrow().clone());
+    if hist.is_empty() {
+        return;
+    }
 
-        let w = (rect.right - rect.left).max(1) as f64;
-        let h = (rect.bottom - rect.top).max(1) as f64;
-        let mut max_s = 50.0_f64;
-        for &s in &hist {
-            if s > max_s {
-                max_s = s;
-            }
+    let w = (rect.right - rect.left).max(1) as f64;
+    let h = (rect.bottom - rect.top).max(1) as f64;
+    let mut max_s = 50.0_f64;
+    for &s in &hist {
+        if s > max_s {
+            max_s = s;
         }
+    }
 
-        // Grid
-        let pen_grid = CreatePen(PS_SOLID, 1, rgb(58, 62, 72)).unwrap_or_default();
+    // Grid
+    let pen_grid = CreatePen(PS_SOLID, 1, rgb(58, 62, 72));
         let old = SelectObject(hdc, pen_grid);
         for i in 1..3 {
             let y = rect.top + ((h * (i as f64) / 3.0)) as i32;
@@ -191,7 +190,7 @@ unsafe fn draw_speed_line(hdc: HDC, rect: &RECT) {
         let _ = DeleteObject(HGDIOBJ(pen_grid.0));
 
         // Line
-        let pen = CreatePen(PS_SOLID, 2, rgb(56, 120, 255)).unwrap_or_default();
+        let pen = CreatePen(PS_SOLID, 2, rgb(56, 120, 255));
         let old = SelectObject(hdc, pen);
         let n = hist.len();
         let last = (n - 1).max(1) as f64;
@@ -215,7 +214,6 @@ unsafe fn draw_speed_line(hdc: HDC, rect: &RECT) {
         let _ = Ellipse(hdc, x - 3, y - 3, x + 3, y + 3);
         let _ = SelectObject(hdc, old);
         let _ = DeleteObject(HGDIOBJ(brush.0));
-    }
 }
 
 unsafe fn paint(hdc: HDC) {
