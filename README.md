@@ -18,6 +18,18 @@ https://github.com/user-attachments/assets/45a0fd7e-2392-4fd9-84ee-0f99900cf103
 
 ---
 
+## ✦ Download
+
+Grab the latest Windows build from [GitHub Releases](https://github.com/RADINMNX2/BetterCopy/releases/latest). Every build ships three portable executables (no DLLs, no install required):
+
+| Asset | What it is |
+| :--- | :--- |
+| `better_copy_gui_*.x64-setup.exe` / `.msi` | Full-featured Tauri GUI daemon: rich dashboard, tray icon, installer bundles. |
+| `better_copy_native.exe` | Lightweight pure Win32 daemon: native tray icon + transient GDI overlay dashboard. No WebView2 dependency. |
+| `bcopy.exe` | Standalone CLI engine for scripts and automation. |
+
+---
+
 
 ## ✦ The Philosophy
 
@@ -28,8 +40,8 @@ It does not compete with feature-heavy power-user tools like TeraCopy or FastCop
 It is built around a simple, uncompromising brand promise:
 * **No Admin:** Runs entirely in user space. No elevation prompts, no UAC bypasses.
 * **No Injection:** Zero DLL injection into `explorer.exe` or hooking of `SHFileOperation`.
-* **No Residue:** No background services, tray clutter, or leftover registry junk.
-* **Low Footprint:** CPU usage is near-zero when idle (~0.01% from the background daemon polling 100x/sec for focus/hotkeys). Memory usage sits at ~30–50MB of RAM (required to keep the Tauri/WebView2 dashboard engine pre-warmed for instant paste response).
+* **No Residue:** No background services, no install-time hooks, no leftover registry junk. Everything runs as a portable, on-demand tray daemon with zero startup entries unless you explicitly opt in to auto-start.
+* **Low Footprint:** CPU usage is near-zero when idle (~0.01% from the background daemon polling 100x/sec for focus/hotkeys). Memory sits at ~30–50MB for the pre-warmed Tauri/WebView2 dashboard; the pure-Win32 native dashboard (no WebView2) uses only a fraction of that.
 
 ---
 
@@ -109,18 +121,18 @@ We benchmarked BetterCopy against Microsoft's industry-standard `robocopy` using
 ## ✦ Usage
 
 ### Global Hotkey (Copy/Paste)
-1. Launch the BetterCopy daemon (`better_copy_gui.exe`).
+1. Launch the BetterCopy daemon — either the full Tauri GUI (`better_copy_gui.exe`) or the lightweight native tray dashboard (`better_copy_native.exe`).
 2. Go to Windows Explorer or your Desktop.
 3. Copy one or more folders (`Ctrl+C`).
 4. Navigate to your target directory and press **`Ctrl+Shift+V`**.
-5. A beautiful, transient Tauri progress dashboard will show the execution plan, speed, and real-time concurrency status.
+5. A transient dashboard will show the execution plan, speed, and real-time concurrency status.
 
 ### Global Hotkey (Delete)
-1. Launch the BetterCopy daemon (`better_copy_gui.exe`).
+1. Launch the BetterCopy daemon — either the full Tauri GUI (`better_copy_gui.exe`) or the lightweight native tray dashboard (`better_copy_native.exe`).
 2. Go to Windows Explorer or your Desktop.
 3. Select one or more files/folders.
 4. Press **`Ctrl+Shift+Delete`**.
-5. The Tauri dashboard will pop up, displaying a transient deletion progress bar, delete rate (in files/second), and a live Canvas speed chart.
+5. A transient deletion dashboard shows the progress bar, delete rate (in files/second), and a live speed chart.
 
 ### Command Line Interface (`bcopy`)
 For scripting, automation, or CLI-first workflows:
@@ -144,17 +156,18 @@ bcopy.exe move "C:\source\path" "D:\dest\path"
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/articulite/BetterCopy.git
+   git clone https://github.com/RADINMNX2/BetterCopy.git
    cd BetterCopy
    ```
 
-2. Build both the CLI and GUI executables:
+2. Build every component:
    ```bash
    cargo build --release
    ```
-   Once compiled, you will find the self-contained, portable executables in the workspace output directory:
-   * **GUI App:** `target/release/better_copy_gui.exe`
-   * **CLI Engine:** `target/release/bcopy.exe`
+   Once compiled, you will find the self-contained, portable executables in `target/release/`:
+   * **Native tray dashboard:** `better_copy_native.exe` (pure Win32 + GDI overlay, no WebView2)
+   * **Tauri GUI daemon:** `better_copy_gui.exe` (rich dashboard; installer/MSI via `cargo tauri build`)
+   * **CLI Engine:** `bcopy.exe`
 
 ---
 
