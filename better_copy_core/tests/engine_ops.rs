@@ -97,8 +97,9 @@ fn copy_preserves_content_and_counts() {
 
     // Byte-for-byte content check on a few files.
     for name in ["file_00_000.bin", "file_01_002.bin", "file_02_004.bin"] {
-        let a = fs::read(src.join("dir00").join(name)).unwrap();
-        let b = fs::read(dest.join("dir00").join(name)).unwrap();
+        let dir = format!("dir{}", name.split('_').next().unwrap());
+        let a = fs::read(src.join(&dir).join(name)).unwrap();
+        let b = fs::read(dest.join(&dir).join(name)).unwrap();
         assert_eq!(a, b, "content mismatch for {name}");
     }
 
