@@ -11,10 +11,12 @@
     "windows": [
       {
         "title": "BetterCopy",
-        "width": 360,
-        "height": 216,
+        "width": 380,
+        "height": 250,
+        "minWidth": 320,
+        "minHeight": 200,
         "center": true,
-        "resizable": false,
+        "resizable": true,
         "fullscreen": false,
         "visible": false,
         "transparent": true,
