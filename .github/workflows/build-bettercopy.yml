@@ -61,6 +61,74 @@ jobs:
         cd better_copy_gui/src-tauri
         cargo tauri build
 
+    - name: Assemble install payload
+      shell: pwsh
+      run: |
+        $payload = @(
+          "target\release\better_copy_gui.exe",
+          "target\release\WebView2Loader.dll"
+        )
+        foreach ($f in $payload) {
+          if (-not (Test-Path $f)) { Write-Error "Missing payload: $f"; exit 1 }
+        }
+        $dest = Join-Path $env:RUNNER_TEMP "bc-payload"
+        New-Item -ItemType Directory -Force -Path $dest | Out-Null
+        Copy-Item $payload -Destination $dest
+        Get-ChildItem $dest | Select-Object Name, Length
+
+    - name: Build custom installer stub
+      shell: pwsh
+      run: |
+        cd installer_app/src-tauri
+        cargo tauri build --no-bundle
+
+    - name: Append payload and emit BetterCopy-Setup.exe
+      shell: pwsh
+      run: |
+        $stub = "target\release\better_copy_installer.exe"
+        $payloadDir = Join-Path $env:RUNNER_TEMP "bc-payload"
+        $out = "target\release\BetterCopy-Setup.exe"
+        if (-not (Test-Path $stub)) { Write-Error "Missing stub: $stub"; exit 1 }
+
+        $entries = @()
+        $offset = [int64]0
+        $payloadLen = [int64]0
+        $files = Get-ChildItem $payloadDir -File
+        foreach ($f in $files) {
+          $size = [int64]$f.Length
+          $entries += @{ path = $f.Name; offset = $offset; size = $size }
+          $offset += $size
+          $payloadLen += $size
+        }
+
+        $manifest = ($entries | ConvertTo-Json -Compress -Depth 5)
+        $manifestBytes = [System.Text.Encoding]::UTF8.GetBytes($manifest)
+        $footer = [System.Text.Encoding]::ASCII.GetBytes("BC_ARC_END") + `
+                  [System.BitConverter]::GetBytes([int64]$manifestBytes.Length) + `
+                  [System.BitConverter]::GetBytes([int64]$payloadLen)
+
+        $stubBytes = [System.IO.File]::ReadAllBytes($stub)
+        $fs = [System.IO.File]::Open($out, [System.IO.FileMode]::Create)
+        try {
+          $fs.Write($stubBytes, 0, $stubBytes.Length)
+          $fs.Write($manifestBytes, 0, $manifestBytes.Length)
+          foreach ($f in $files) {
+            $b = [System.IO.File]::ReadAllBytes($f.FullName)
+            $fs.Write($b, 0, $b.Length)
+          }
+          $fs.Write($footer, 0, $footer.Length)
+        } finally { $fs.Close() }
+
+        $size = (Get-Item $out).Length
+        Write-Host "BetterCopy-Setup.exe size: $size bytes"
+
+    - name: Assert installer size
+      shell: pwsh
+      run: |
+        $size = (Get-Item "target\release\BetterCopy-Setup.exe").Length
+        Write-Host "Installer size: $([math]::Round($size / 1MB, 2)) MB"
+        if ($size -gt 28MB) { Write-Error "Installer exceeds 28 MB budget ($size bytes)"; exit 1 }
+
     - name: Verify outputs
       shell: pwsh
       run: |
@@ -68,6 +136,8 @@ jobs:
         Get-Item "target\release\bcopy.exe" | Select-Object FullName, Length
         "=== native ==="
         Get-Item "target\release\better_copy_native.exe" | Select-Object FullName, Length
+        "=== custom installer ==="
+        Get-Item "target\release\BetterCopy-Setup.exe" | Select-Object FullName, Length
         "=== bundles ==="
         Get-ChildItem "target\release\bundle\" -Recurse -File | Select-Object FullName, Length
 
@@ -78,6 +148,7 @@ jobs:
         path: |
           target\release\bcopy.exe
           target\release\better_copy_native.exe
+          target\release\BetterCopy-Setup.exe
           target\release\bundle\
         compression-level: 0
 
@@ -90,7 +161,8 @@ jobs:
         $files = @()
         $files += "target\release\bcopy.exe"
         $files += "target\release\better_copy_native.exe"
+        $files += "target\release\BetterCopy-Setup.exe"
         $files += @(Get-ChildItem "target\release\bundle\" -Recurse -File | ForEach-Object { $_.FullName })
         if ($files.Count -eq 0) { Write-Error "No release assets found"; exit 1 }
-        $release = gh release create $env:TAG $files --repo ${{ github.repository }} --title "BetterCopy build ${{ github.run_id }}" --notes "Automated build of BetterCopy (CLI bcopy, native tray dashboard and Tauri GUI) for Windows." --latest
+        $release = gh release create $env:TAG $files --repo ${{ github.repository }} --title "BetterCopy build ${{ github.run_id }}" --notes "Automated build of BetterCopy (custom neon-glass setup, CLI bcopy, native tray dashboard and Tauri GUI) for Windows." --latest
         Write-Host "Release created: $release"

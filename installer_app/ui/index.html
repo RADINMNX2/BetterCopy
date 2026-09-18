@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BetterCopy · Setup</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="shell">
+    <div class="aura" data-tauri-drag-region></div>
+
+    <header class="head" data-tauri-drag-region>
+      <span class="logo" data-tauri-drag-region>
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path d="M6 18a8 8 0 0 0 16 0V9a8 8 0 0 0-8-8 8 8 0 0 0-8 8v9z" fill="none" stroke="currentColor" stroke-width="1.8"/>
+          <circle cx="14" cy="12" r="2.4" fill="currentColor"/>
+        </svg>
+        BetterCopy
+      </span>
+      <button id="btn-close" class="x" title="Cancel">
+        <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+          <path d="M0 0 L10 10 M10 0 L0 10" stroke="currentColor" stroke-width="1.6"/>
+        </svg>
+      </button>
+    </header>
+
+    <main class="stage">
+      <!-- STEP 1: welcome -->
+      <section class="step is-active" data-step="welcome">
+        <h1 class="title">Copy at the speed of light</h1>
+        <p class="sub">A neon-glass copy accelerator living in your tray.
+          This wizard will install BetterCopy to your user profile.</p>
+        <div class="badges">
+          <span class="badge">Per-user</span>
+          <span class="badge">No admin needed</span>
+          <span class="badge">Start Menu</span>
+        </div>
+      </section>
+
+      <!-- STEP 2: destination -->
+      <section class="step" data-step="dest">
+        <h1 class="title">Where to install</h1>
+        <p class="sub">Files land in your user folder — no administrator rights required.</p>
+        <div class="pathbox">
+          <input id="install-dir" type="text" spellcheck="false" readonly />
+          <button id="btn-browse" class="ghost">Change…</button>
+        </div>
+      </section>
+
+      <!-- STEP 3: progress -->
+      <section class="step" data-step="install">
+        <h1 class="title">Installing</h1>
+        <div class="ring-wrap">
+          <svg class="ring" viewBox="0 0 120 120">
+            <circle class="ring-track" cx="60" cy="60" r="52" />
+            <circle class="ring-fill" id="ring-fill" cx="60" cy="60" r="52" />
+          </svg>
+          <div class="ring-pct" id="pct">0%</div>
+        </div>
+        <p class="msg" id="status-msg">Preparing…</p>
+      </section>
+
+      <!-- STEP 4: done -->
+      <section class="step" data-step="done">
+        <div class="check">
+          <svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true">
+            <path d="M5 12.5 10 17.5 19 6.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h1 class="title">Ready</h1>
+        <p class="sub" id="done-sub">BetterCopy has been installed for your user.</p>
+      </section>
+
+      <!-- STEP 5: error -->
+      <section class="step" data-step="error">
+        <div class="check bad">
+          <svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true">
+            <path d="M4 4 L20 20 M20 4 L4 20" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <h1 class="title">Something went wrong</h1>
+        <p class="msg" id="error-msg">Unknown error.</p>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <button id="btn-back" class="ghost" hidden>Back</button>
+      <span class="spacer"></span>
+      <button id="btn-primary" class="primary">Install</button>
+    </footer>
+  </div>
+
+  <script src="index.js"></script>
+</body>
+</html>
