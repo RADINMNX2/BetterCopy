@@ -89,8 +89,7 @@ jobs:
         "=== payload ==="
         Get-ChildItem $dest -Recurse | Select-Object FullName, Length
         if (-not (Get-ChildItem $dest -File)) { Write-Error "Payload is empty"; exit 1 }
-        $dllCount = @(Get-ChildItem $dest -Filter "*.dll" -File).Count
-        if ($dllCount -eq 0) { Write-Error "No DLLs found in payload — GUI cannot run without WebView2Loader"; exit 1 }
+        Write-Host "Payload ready. Tauri statically links WebView2, no extra DLL required."
 
     - name: Build custom installer stub
       shell: pwsh
