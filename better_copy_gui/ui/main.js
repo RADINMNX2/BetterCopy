@@ -184,6 +184,14 @@ function startThreadAnimation(concurrency) {
   }
 
   copyActive = true;
+
+  // Static dots when reduced motion is preferred (no rAF loop)
+  if (document.body.classList.contains('reduce-motion')) {
+    const dots = els.threadGrid.querySelectorAll('.thread-dot');
+    for (let i = 0; i < dots.length; i++) dots[i].style.opacity = '0.5';
+    return;
+  }
+
   let startTime = Date.now();
 
   function animate() {
@@ -693,7 +701,11 @@ listen('indexing-progress', (event) => {
   // Restore preferences
   if (window.localStorage) {
     applyAccent(readPref(PREF_KEYS.accent, 'emerald'));
-    applyMotionPreference(readPref(PREF_KEYS.motion, '0') === '1');
+    const storedMotion = readPref(PREF_KEYS.motion, null);
+    const reduce = storedMotion !== null
+      ? storedMotion === '1'
+      : (typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    applyMotionPreference(reduce);
   } else {
     applyAccent('emerald');
     applyMotionPreference(false);

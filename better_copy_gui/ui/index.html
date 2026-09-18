@@ -17,6 +17,17 @@
     </div>
     <div class="noise" aria-hidden="true"></div>
 
+    <!-- Luxury frame details: corner brackets, sparkles, bottom energy line -->
+    <svg class="corner-brackets" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <path class="cb cb-tl" pathLength="1" d="M5 26 V5 H26"/>
+      <path class="cb cb-tr" pathLength="1" d="M74 5 H95 V26"/>
+      <path class="cb cb-br" pathLength="1" d="M95 74 V95 H74"/>
+      <path class="cb cb-bl" pathLength="1" d="M26 95 H5 V74"/>
+    </svg>
+    <div class="spark spark-1" aria-hidden="true"></div>
+    <div class="spark spark-2" aria-hidden="true"></div>
+    <div class="energy-line" aria-hidden="true"></div>
+
     <main class="window-content" data-tauri-drag-region>
 
       <!-- ============ App Header ============ -->
@@ -26,6 +37,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
             </svg>
+            <span class="brand-shine" aria-hidden="true"></span>
           </div>
           <div class="brand-text" data-tauri-drag-region>
             <span class="brand-title">BetterCopy</span>
@@ -64,7 +76,7 @@
 
         <!-- Stats Cards -->
         <div class="stats-grid" data-tauri-drag-region>
-          <div class="stat-card" data-tauri-drag-region>
+          <div class="stat-card edge" data-tauri-drag-region>
             <span class="stat-icon" data-tauri-drag-region>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
@@ -75,7 +87,7 @@
               <span class="value" id="stat-speed">0.0 MB/s</span>
             </div>
           </div>
-          <div class="stat-card" data-tauri-drag-region>
+          <div class="stat-card edge" data-tauri-drag-region>
             <span class="stat-icon" data-tauri-drag-region>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
@@ -86,7 +98,7 @@
               <span class="value" id="stat-eta">Calculating...</span>
             </div>
           </div>
-          <div class="stat-card" data-tauri-drag-region>
+          <div class="stat-card edge" data-tauri-drag-region>
             <span class="stat-icon" data-tauri-drag-region>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
@@ -100,7 +112,8 @@
         </div>
 
         <!-- Speed Graph -->
-        <div class="graph-container" data-tauri-drag-region>
+        <div class="graph-container edge" data-tauri-drag-region>
+          <div class="graph-beam" aria-hidden="true"></div>
           <canvas id="speed-canvas"></canvas>
         </div>
 
@@ -137,7 +150,7 @@
       </div>
 
       <!-- ============ Error Overlay ============ -->
-      <div class="error-overlay" id="error-overlay" style="display: none;" role="dialog" aria-label="Transfer errors">
+      <div class="error-overlay edge edge--danger" id="error-overlay" style="display: none;" role="dialog" aria-label="Transfer errors">
         <div class="error-header">
           <span class="error-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -154,7 +167,7 @@
       </div>
 
       <!-- ============ Settings Popover ============ -->
-      <div class="settings-popover" id="settings-popover" style="display: none;">
+      <div class="settings-popover edge" id="settings-popover" style="display: none;">
         <div class="settings-section">
           <span class="settings-title">Accent</span>
           <div class="swatches" id="accent-swatches">
