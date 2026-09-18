@@ -64,17 +64,33 @@ jobs:
     - name: Assemble install payload
       shell: pwsh
       run: |
-        $payload = @(
-          "target\release\better_copy_gui.exe",
-          "target\release\WebView2Loader.dll"
-        )
-        foreach ($f in $payload) {
-          if (-not (Test-Path $f)) { Write-Error "Missing payload: $f"; exit 1 }
-        }
+        "=== target/release top-level ==="
+        Get-ChildItem "target\release" -Force | Select-Object Name, Length
+
+        $mainExe = "target\release\better_copy_gui.exe"
+        if (-not (Test-Path $mainExe)) { Write-Error "GUI exe not found: $mainExe"; exit 1 }
+
         $dest = Join-Path $env:RUNNER_TEMP "bc-payload"
         New-Item -ItemType Directory -Force -Path $dest | Out-Null
-        Copy-Item $payload -Destination $dest
-        Get-ChildItem $dest | Select-Object Name, Length
+
+        Copy-Item $mainExe $dest
+
+        $dlls = @(Get-ChildItem "target\release" -Filter "*.dll" -File -ErrorAction SilentlyContinue)
+        foreach ($d in $dlls) { Copy-Item $d.FullName $dest }
+
+        foreach ($n in @("bcopy.exe", "better_copy_native.exe")) {
+          if (Test-Path "target\release\$n") { Copy-Item "target\release\$n" $dest }
+        }
+
+        foreach ($d in @("resources", "icons")) {
+          if (Test-Path "target\release\$d") { Copy-Item "target\release\$d" $dest -Recurse }
+        }
+
+        "=== payload ==="
+        Get-ChildItem $dest -Recurse | Select-Object FullName, Length
+        if (-not (Get-ChildItem $dest -File)) { Write-Error "Payload is empty"; exit 1 }
+        $dllCount = @(Get-ChildItem $dest -Filter "*.dll" -File).Count
+        if ($dllCount -eq 0) { Write-Error "No DLLs found in payload — GUI cannot run without WebView2Loader"; exit 1 }
 
     - name: Build custom installer stub
       shell: pwsh
