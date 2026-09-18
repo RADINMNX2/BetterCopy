@@ -93,19 +93,25 @@ fn copy_preserves_content_and_counts() {
     assert!(summary.failures.is_empty(), "failures: {:?}", summary.failures);
     assert!(!summary.was_cancelled);
     assert_eq!(summary.files_copied, 15, "5 files x 3 dirs expected");
-    assert_eq!(dir_entry_count(&dest) - 1, dir_entry_count(&src) - 1);
+    // dest gains exactly one extra top-level entry: the recreated source folder.
+    assert_eq!(dir_entry_count(&dest) - 1, dir_entry_count(&src));
+
+    // Copying a folder must recreate the folder itself under the destination
+    // (Explorer semantics), not flatten its contents into the destination root.
+    let dest_src = dest.join(src.file_name().unwrap());
+    assert!(dest_src.is_dir(), "copied folder should appear as dest\\{}", src.file_name().unwrap().to_string_lossy());
 
     // Byte-for-byte content check on a few files.
     for name in ["file_00_000.bin", "file_01_002.bin", "file_02_004.bin"] {
         let dir = format!("dir{}", name.split('_').nth(1).unwrap());
         let a = fs::read(src.join(&dir).join(name)).unwrap();
-        let b = fs::read(dest.join(&dir).join(name)).unwrap();
+        let b = fs::read(dest_src.join(&dir).join(name)).unwrap();
         assert_eq!(a, b, "content mismatch for {name}");
     }
 
     // Verify mode already checks hashes; a matched manifest means identical trees.
     let src_sum = summarize(&src);
-    let dest_sum = summarize(&dest);
+    let dest_sum = summarize(&dest_src);
     assert_eq!(src_sum.len(), dest_sum.len());
     for (s, d) in src_sum.iter().zip(dest_sum.iter()) {
         assert_eq!(s.1, d.1, "size mismatch for {}", d.0.display());
@@ -130,7 +136,7 @@ fn copy_preserves_timestamps_and_readonly_bit() {
     let summary = run_copy(&[src], &dest, false);
     assert!(summary.failures.is_empty(), "failures: {:?}", summary.failures);
 
-    let copied = dest.join("dir00/file_00_000.bin");
+    let copied = dest.join("src").join("dir00/file_00_000.bin");
     let copied_ro = fs::metadata(&copied).unwrap().permissions().readonly();
     assert!(copied_ro, "readonly attribute should propagate");
 
@@ -148,7 +154,7 @@ fn move_rehooks_source_cleanly() {
     assert!(summary.failures.is_empty(), "failures: {:?}", summary.failures);
     assert!(!summary.was_cancelled);
 
-    assert!(dest.join("dir00").exists(), "destination should have content");
+    assert!(dest.join("src").join("dir00").exists(), "destination should have content");
     // The two-phase verified move should have removed the source tree.
     assert!(!src.exists(), "source root should be gone after a verified move");
 

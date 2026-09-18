@@ -98,6 +98,19 @@ pub fn run() {
           cancel_flag_clone.store(true, Ordering::SeqCst);
       });
       
+      // Shared pause flag (engine already supports pausing in-flight transfers)
+      let pause_flag = Arc::new(AtomicBool::new(false));
+      let pause_flag_clone = pause_flag.clone();
+      
+      // Listen for pause/resume events from frontend UI
+      let _id_pause = app_handle.listen("copy-pause", move |_event| {
+          pause_flag_clone.store(true, Ordering::SeqCst);
+      });
+      let pause_flag_resume = pause_flag.clone();
+      let _id_resume = app_handle.listen("copy-resume", move |_event| {
+          pause_flag_resume.store(false, Ordering::SeqCst);
+      });
+      
       // Listen for window hide request from frontend UI
       let window_hide = window.clone();
       let _id_hide = app_handle.listen("window-hide-request", move |_event| {
@@ -106,11 +119,13 @@ pub fn run() {
       
       let window_worker = window.clone();
       let cancel_flag_worker = cancel_flag.clone();
+      let pause_flag_worker = pause_flag.clone();
       
       // Spawn background worker thread to process copy queue sequential execution
       thread::spawn(move || {
           while let Ok(job) = copy_rx.recv() {
               cancel_flag_worker.store(false, Ordering::SeqCst);
+              pause_flag_worker.store(false, Ordering::SeqCst);
               
                match job {
                   Job::CopyMove { sources, dest, is_move } => {
@@ -346,7 +361,7 @@ pub fn run() {
                           is_move,
                           None,
                           cancel_flag_worker.clone(),
-                          Arc::new(AtomicBool::new(false)), // pause not wired to Tauri UI yet
+                          pause_flag_worker.clone(),
                           false,                            // verified-move hash check off for Tauri
                           Some(progress_cb),
                       );
@@ -521,7 +536,7 @@ pub fn run() {
                           &sources,
                           concurrency,
                           cancel_flag_worker.clone(),
-                          Arc::new(AtomicBool::new(false)), // pause not wired to Tauri UI yet
+                          pause_flag_worker.clone(),
                           Some(progress_cb),
                       );
                       

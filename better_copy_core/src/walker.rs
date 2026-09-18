@@ -197,11 +197,10 @@ pub fn build_work_list(
             Some(name) => name,
             None => continue, // Skip root drive paths like C:\ which don't have a filename component
         };
-        let mut target_dest = if metadata.is_dir() {
-            dest_root_long.clone()
-        } else {
-            dest_root_long.join(file_name)
-        };
+        // A directory source always lands __inside__ a new folder named after it
+        // under the destination root (like Explorer: copy "foo" -> dest\foo),
+        // never extracted flat into dest_root itself.
+        let mut target_dest = dest_root_long.join(file_name);
 
         // Resolve self-copy and name collisions with already planned destinations
         let mut counter = 1;

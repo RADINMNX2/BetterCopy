@@ -11,8 +11,8 @@
     "windows": [
       {
         "title": "BetterCopy",
-        "width": 320,
-        "height": 125,
+        "width": 360,
+        "height": 216,
         "center": true,
         "resizable": false,
         "fullscreen": false,

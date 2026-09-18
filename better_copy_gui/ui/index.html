@@ -8,77 +8,179 @@
 </head>
 <body>
   <div class="window-container" data-tauri-drag-region>
-    <!-- Content Area -->
+
+    <!-- Ambient aurora glow layer (inside the clip so corners stay rounded) -->
+    <div class="aurora" aria-hidden="true">
+      <div class="orb orb-1"></div>
+      <div class="orb orb-2"></div>
+      <div class="orb orb-3"></div>
+    </div>
+    <div class="noise" aria-hidden="true"></div>
+
     <main class="window-content" data-tauri-drag-region>
-      
-      <!-- Preparing View (Shown during directory walking/profiling) -->
+
+      <!-- ============ App Header ============ -->
+      <header class="app-header" data-tauri-drag-region>
+        <div class="brand" data-tauri-drag-region>
+          <div class="brand-icon" data-tauri-drag-region>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+          </div>
+          <div class="brand-text" data-tauri-drag-region>
+            <span class="brand-title">BetterCopy</span>
+            <span class="brand-sub" id="brand-sub">Ready</span>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button class="icon-btn" id="settings-btn" title="Appearance" aria-label="Appearance settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>
+              <line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>
+              <line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>
+              <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>
+            </svg>
+          </button>
+          <button class="icon-btn close" id="close-btn" title="Close" aria-label="Close window">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- ============ Preparing View ============ -->
       <div class="preparing-view" id="preparing-view" data-tauri-drag-region>
-        <div class="spinner"></div>
+        <div class="spinner-ring" data-tauri-drag-region>
+          <span class="spinner-core" data-tauri-drag-region></span>
+        </div>
         <div class="preparing-text" id="preparing-text">Indexing files to speed up operation</div>
         <div class="preparing-count" id="preparing-count">0 files indexed</div>
         <button class="mini-cancel-btn" id="prep-cancel-btn">Cancel</button>
       </div>
 
-      <!-- Overall Progress Dashboard (Hidden during preparation) -->
+      <!-- ============ Dashboard ============ -->
       <div class="dashboard" id="dashboard" style="display: none;" data-tauri-drag-region>
-        <!-- Stats Grid -->
+
+        <!-- Stats Cards -->
         <div class="stats-grid" data-tauri-drag-region>
-          <div class="stat-card speed">
-            <span class="label" id="label-speed">Speed</span>
-            <span class="value" id="stat-speed">0.0 MB/s</span>
+          <div class="stat-card" data-tauri-drag-region>
+            <span class="stat-icon" data-tauri-drag-region>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+              </svg>
+            </span>
+            <div class="stat-body" data-tauri-drag-region>
+              <span class="label" id="label-speed">Speed</span>
+              <span class="value" id="stat-speed">0.0 MB/s</span>
+            </div>
           </div>
-          <div class="stat-card remaining">
-            <span class="label">Remaining</span>
-            <span class="value" id="stat-eta">Calculating...</span>
+          <div class="stat-card" data-tauri-drag-region>
+            <span class="stat-icon" data-tauri-drag-region>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+              </svg>
+            </span>
+            <div class="stat-body" data-tauri-drag-region>
+              <span class="label">Remaining</span>
+              <span class="value" id="stat-eta">Calculating...</span>
+            </div>
           </div>
-          <div class="stat-card files">
-            <span class="label">Files</span>
-            <span class="value" id="stat-files">0 / 0</span>
+          <div class="stat-card" data-tauri-drag-region>
+            <span class="stat-icon" data-tauri-drag-region>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+              </svg>
+            </span>
+            <div class="stat-body" data-tauri-drag-region>
+              <span class="label">Files</span>
+              <span class="value" id="stat-files">0 / 0</span>
+            </div>
           </div>
         </div>
 
-        <!-- Speed Graph (Replaces the green bar) -->
+        <!-- Speed Graph -->
         <div class="graph-container" data-tauri-drag-region>
-          <canvas id="speed-canvas" width="288" height="24"></canvas>
+          <canvas id="speed-canvas"></canvas>
         </div>
 
-        <!-- Smooth animated progress fill -->
+        <!-- Progress -->
         <div class="progress-container" data-tauri-drag-region>
-          <div class="progress-bar-bg" data-tauri-drag-region>
+          <div class="progress-track" data-tauri-drag-region>
             <div class="progress-bar-fill" id="progress-bar-fill"></div>
           </div>
-        </div>
-
-        <!-- Progress Metadata & Cancel Button -->
-        <div class="progress-meta" data-tauri-drag-region>
-          <div data-tauri-drag-region style="white-space: nowrap;">
-            <span id="progress-percent">0%</span>
-            <span id="progress-bytes" style="margin-left: 8px;">0 MB / 0 MB</span>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px; white-space: nowrap;">
-            <span id="status-msg">Waiting...</span>
-            <button class="mini-cancel-btn" id="cancel-btn">Cancel</button>
+          <div class="progress-meta" data-tauri-drag-region>
+            <div class="meta-left" data-tauri-drag-region>
+              <span id="progress-percent">0%</span>
+              <span id="progress-bytes">0 MB / 0 MB</span>
+            </div>
+            <div class="meta-right" data-tauri-drag-region>
+              <div class="thread-grid" id="thread-grid" aria-hidden="true"></div>
+              <span id="status-msg">Waiting...</span>
+              <button class="icon-btn pause-btn" id="pause-btn" title="Pause" aria-label="Pause transfer" disabled>
+                <svg class="ico-pause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <rect x="6" y="5" width="4" height="14" rx="1.5"/><rect x="14" y="5" width="4" height="14" rx="1.5"/>
+                </svg>
+                <svg class="ico-play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M7.2 5.1a1 1 0 0 1 1.5-.87l10.6 6.9a1 1 0 0 1 0 1.74L8.7 19.77a1 1 0 0 1-1.5-.87z"/>
+                </svg>
+              </button>
+              <button class="mini-cancel-btn" id="cancel-btn">Cancel</button>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- Active Transfers List (Hidden via CSS) -->
+      <!-- ============ Active Transfer List ============ -->
       <div class="jobs-list" id="jobs-list" style="display: none;">
         <div class="job-item empty">No active copy transfers.</div>
       </div>
-      
-      <!-- Error Summary Overlay (Hidden by default) -->
-      <div class="error-overlay" id="error-overlay" style="display: none;">
+
+      <!-- ============ Error Overlay ============ -->
+      <div class="error-overlay" id="error-overlay" style="display: none;" role="dialog" aria-label="Transfer errors">
         <div class="error-header">
-          <span>⚠️ Transfer completed with errors</span>
+          <span class="error-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </span>
+          <span>Transfer completed with errors</span>
         </div>
-        <div class="error-content" id="error-list">
-          <!-- Dynamically populated -->
-        </div>
+        <div class="error-content" id="error-list"></div>
         <div class="error-actions">
           <button class="action-btn" id="error-close-btn">Dismiss</button>
         </div>
       </div>
+
+      <!-- ============ Settings Popover ============ -->
+      <div class="settings-popover" id="settings-popover" style="display: none;">
+        <div class="settings-section">
+          <span class="settings-title">Accent</span>
+          <div class="swatches" id="accent-swatches">
+            <button class="swatch" data-accent="emerald" title="Emerald" aria-label="Emerald accent"></button>
+            <button class="swatch" data-accent="cyan" title="Cyan" aria-label="Cyan accent"></button>
+            <button class="swatch" data-accent="violet" title="Violet" aria-label="Violet accent"></button>
+            <button class="swatch" data-accent="gold" title="Gold" aria-label="Gold accent"></button>
+            <button class="swatch" data-accent="rose" title="Rose" aria-label="Rose accent"></button>
+          </div>
+        </div>
+        <div class="settings-divider"></div>
+        <label class="setting-row">
+          <span class="setting-label">
+            Reduced motion
+            <span class="setting-hint">Calm down animations</span>
+          </span>
+          <span class="toggle">
+            <input type="checkbox" id="motion-toggle" aria-label="Reduce animations">
+            <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
+          </span>
+        </label>
+      </div>
+
+      <!-- ============ Toast Notifications ============ -->
+      <div class="toast-container" id="toast-container" aria-live="polite"></div>
+
     </main>
   </div>
 
