@@ -4,6 +4,7 @@
    ============================================================ */
 const { getCurrentWindow } = window.__TAURI__.window;
 const { listen, emit } = window.__TAURI__.event;
+const { invoke } = window.__TAURI__.core;
 
 const appWindow = getCurrentWindow();
 
@@ -67,9 +68,6 @@ const els = {
   preparingText: $('preparing-text'),
   preparingCount: $('preparing-count'),
   settingsBtn: $('settings-btn'),
-  settingsPop: $('settings-popover'),
-  swatches: $('accent-swatches'),
-  motionToggle: $('motion-toggle'),
   toastContainer: $('toast-container'),
 };
 
@@ -130,22 +128,13 @@ function applyAccent(accent) {
   if (!ACCENTS.includes(accent)) accent = 'emerald';
   document.body.dataset.accent = accent;
   writePref(PREF_KEYS.accent, accent);
-  els.swatches.querySelectorAll('.swatch').forEach((s) => {
-    s.classList.toggle('active', s.dataset.accent === accent);
-  });
   updateGraphTheme();
-}
-
-function toggleSettings(force) {
-  const willShow = force !== undefined ? force : els.settingsPop.style.display === 'none';
-  els.settingsPop.style.display = willShow ? 'block' : 'none';
 }
 
 /* ---------- Reduced motion ---------- */
 function applyMotionPreference(reduce) {
   document.body.classList.toggle('reduce-motion', reduce);
   writePref(PREF_KEYS.motion, reduce ? '1' : '0');
-  if (els.motionToggle) els.motionToggle.checked = reduce;
 }
 
 /* ---------- Canvas sizing (device-pixel aware) ---------- */
@@ -454,7 +443,7 @@ async function togglePause() {
    ============================================================ */
 els.closeBtn.addEventListener('click', async () => {
   try { await emit('copy-cancel'); } catch (e) { console.error(e); }
-  try { await appWindow.hide(); } catch (e) { console.error(e); }
+  try { await invoke('tray_action', { action: 'close' }); } catch (e) { console.error(e); }
 });
 
 els.cancelBtn.addEventListener('click', async () => {
@@ -472,43 +461,20 @@ els.errorCloseBtn.addEventListener('click', async () => {
   try { await appWindow.hide(); } catch (e) { console.error(e); }
 });
 
-/* Settings popover */
-els.settingsBtn.addEventListener('click', (e) => {
-  e.stopPropagation();
-  toggleSettings();
-});
-
-document.addEventListener('click', (e) => {
-  if (els.settingsPop.style.display !== 'none' &&
-      !els.settingsPop.contains(e.target) &&
-      e.target !== els.settingsBtn) {
-    toggleSettings(false);
-  }
+/* Settings — opens the dedicated settings window */
+els.settingsBtn.addEventListener('click', async () => {
+  try {
+    await invoke('open_settings_window');
+  } catch (e) { console.error(e); }
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') {
-    toggleSettings(false);
-  }
   // Ctrl+P toggles pause during an active transfer
   if (e.ctrlKey && (e.key === 'p' || e.key === 'P')) {
     e.preventDefault();
     if (!paused && graphRafId !== null) togglePause();
     else if (paused) togglePause();
   }
-});
-
-/* Accent swatches */
-els.swatches.addEventListener('click', (e) => {
-  const sw = e.target.closest('.swatch');
-  if (!sw) return;
-  applyAccent(sw.dataset.accent);
-  showToast(`Accent: ${sw.dataset.accent}`, 'info');
-});
-
-/* Reduced motion */
-els.motionToggle.addEventListener('change', () => {
-  applyMotionPreference(els.motionToggle.checked);
 });
 
 /* ============================================================
@@ -720,6 +686,13 @@ listen('indexing-progress', (event) => {
   }
 
   setGraphLabel('Speed');
+
+  // Live-sync preferences changed from the settings window
+  listen('prefs-changed', (event) => {
+    const { accent, motion } = event.payload;
+    if (typeof accent === 'string') applyAccent(accent);
+    if (typeof motion === 'boolean') applyMotionPreference(motion);
+  });
 
   // Fade the window in
   requestAnimationFrame(() => document.body.classList.add('loaded'));

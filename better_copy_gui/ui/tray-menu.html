@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BetterCopy · Menu</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-win="tray" data-accent="emerald">
+  <div class="tray-shell">
+    <div class="tray-head">
+      <span class="tray-logo">BetterCopy</span>
+    </div>
+
+    <div class="tray-body">
+      <button class="tray-action" data-act="open">
+        <span class="tray-item">
+          <span class="tray-label">Open BetterCopy</span>
+          <span class="tray-hint">Show</span>
+        </span>
+      </button>
+      <button class="tray-action" data-act="settings">
+        <span class="tray-item">
+          <span class="tray-label">Settings</span>
+          <span class="tray-hint">Configure</span>
+        </span>
+      </button>
+
+      <div class="tray-sep"></div>
+
+      <button class="tray-action" data-act="startup">
+        <span class="tray-item">
+          <span class="tray-label">Start with Windows</span>
+          <span class="tray-check" id="tray-startup"></span>
+        </span>
+      </button>
+      <button class="tray-action" data-act="admin">
+        <span class="tray-item">
+          <span class="tray-label">Run as administrator</span>
+          <span class="tray-check" id="tray-admin"></span>
+        </span>
+      </button>
+      <button class="tray-action" data-act="close_to_tray">
+        <span class="tray-item">
+          <span class="tray-label">Close to tray</span>
+          <span class="tray-check" id="tray-close-to-tray"></span>
+        </span>
+      </button>
+
+      <div class="tray-sep"></div>
+
+      <button class="tray-action" data-act="quit">
+        <span class="tray-item tray-quit">
+          <span class="tray-label">Quit BetterCopy</span>
+          <span class="tray-hint">Exit</span>
+        </span>
+      </button>
+    </div>
+  </div>
+
+  <script src="tray-menu.js"></script>
+</body>
+</html>

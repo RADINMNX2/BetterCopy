@@ -23,6 +23,35 @@
         "decorations": false,
         "label": "main",
         "alwaysOnTop": true
+      },
+      {
+        "title": "BetterCopy Settings",
+        "width": 360,
+        "height": 430,
+        "center": true,
+        "resizable": false,
+        "fullscreen": false,
+        "visible": false,
+        "transparent": true,
+        "decorations": false,
+        "label": "settings",
+        "skipTaskbar": true,
+        "alwaysOnTop": true
+      },
+      {
+        "title": "BetterCopy Menu",
+        "width": 244,
+        "height": 372,
+        "center": false,
+        "resizable": false,
+        "fullscreen": false,
+        "visible": false,
+        "transparent": true,
+        "decorations": false,
+        "label": "tray-menu",
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "shadow": false
       }
     ],
     "security": {
@@ -39,6 +68,15 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "icons/nsis-header.bmp",
+        "sidebarImage": "icons/nsis-sidebar.bmp",
+        "languages": ["English"]
+      }
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

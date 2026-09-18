@@ -17,13 +17,7 @@
     </div>
     <div class="noise" aria-hidden="true"></div>
 
-    <!-- Luxury frame details: corner brackets, sparkles, bottom energy line -->
-    <svg class="corner-brackets" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-      <path class="cb cb-tl" pathLength="1" d="M5 26 V5 H26"/>
-      <path class="cb cb-tr" pathLength="1" d="M74 5 H95 V26"/>
-      <path class="cb cb-br" pathLength="1" d="M95 74 V95 H74"/>
-      <path class="cb cb-bl" pathLength="1" d="M26 95 H5 V74"/>
-    </svg>
+    <!-- Luxury frame details: sparkles, bottom energy line -->
     <div class="spark spark-1" aria-hidden="true"></div>
     <div class="spark spark-2" aria-hidden="true"></div>
     <div class="energy-line" aria-hidden="true"></div>
@@ -164,31 +158,6 @@
         <div class="error-actions">
           <button class="action-btn" id="error-close-btn">Dismiss</button>
         </div>
-      </div>
-
-      <!-- ============ Settings Popover ============ -->
-      <div class="settings-popover edge" id="settings-popover" style="display: none;">
-        <div class="settings-section">
-          <span class="settings-title">Accent</span>
-          <div class="swatches" id="accent-swatches">
-            <button class="swatch" data-accent="emerald" title="Emerald" aria-label="Emerald accent"></button>
-            <button class="swatch" data-accent="cyan" title="Cyan" aria-label="Cyan accent"></button>
-            <button class="swatch" data-accent="violet" title="Violet" aria-label="Violet accent"></button>
-            <button class="swatch" data-accent="gold" title="Gold" aria-label="Gold accent"></button>
-            <button class="swatch" data-accent="rose" title="Rose" aria-label="Rose accent"></button>
-          </div>
-        </div>
-        <div class="settings-divider"></div>
-        <label class="setting-row">
-          <span class="setting-label">
-            Reduced motion
-            <span class="setting-hint">Calm down animations</span>
-          </span>
-          <span class="toggle">
-            <input type="checkbox" id="motion-toggle" aria-label="Reduce animations">
-            <span class="toggle-track" aria-hidden="true"><span class="toggle-thumb"></span></span>
-          </span>
-        </label>
       </div>
 
       <!-- ============ Toast Notifications ============ -->

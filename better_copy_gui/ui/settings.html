@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Settings · BetterCopy</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body data-win="settings" data-accent="emerald">
+  <div class="settings-shell">
+    <div class="settings-head" data-tauri-drag-region>
+      <span class="settings-title">BetterCopy</span>
+      <button id="settings-close-btn" class="icon-btn" title="Close settings">
+        <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+          <path d="M0 0 L10 10 M10 0 L0 10" stroke="currentColor" stroke-width="1.6"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="settings-body">
+      <div class="settings-section">
+        <div class="settings-divider">Appearance</div>
+        <div class="setting-row">
+          <div class="setting-label">
+            Accent
+            <span class="setting-hint">Highlight color</span>
+          </div>
+          <div id="accent-swatches" class="swatches"></div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-label">Launch with Windows</div>
+          <label class="toggle">
+            <input id="startup-toggle" type="checkbox" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-divider">Behavior</div>
+        <div class="setting-row">
+          <div class="setting-label">Minimize to tray</div>
+          <label class="toggle">
+            <input id="close-to-tray-toggle" type="checkbox" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-label">Run as administrator</div>
+          <label class="toggle">
+            <input id="admin-toggle" type="checkbox" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-label">Reduced motion</div>
+          <label class="toggle">
+            <input id="motion-toggle" type="checkbox" />
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="settings.js"></script>
+</body>
+</html>

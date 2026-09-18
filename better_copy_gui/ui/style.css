@@ -860,27 +860,6 @@ body.paused .pause-btn .ico-play { display: inline-block; }
 /* ============================================================
    Settings popover
    ============================================================ */
-.settings-popover {
-  position: absolute;
-  top: 42px;
-  right: 8px;
-  z-index: 80;
-  min-width: 216px;
-  background: var(--panel-strong);
-  border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  backdrop-filter: blur(26px) saturate(170%);
-  -webkit-backdrop-filter: blur(26px) saturate(170%);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  padding: 12px;
-  animation: pop-in 0.22s var(--ease);
-}
-
-@keyframes pop-in {
-  from { opacity: 0; transform: translateY(-6px) scale(0.96); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-}
-
 .settings-section {
   display: flex;
   flex-direction: column;
@@ -1084,8 +1063,8 @@ body.paused .pause-btn .ico-play { display: inline-block; }
 
 /* ---------- Animated gradient ring (frame-within-frame edge) ---------- */
 /* .edge never overrides position: stat-card/graph-container declare their
-   own relative box, while settings-popover & error-overlay MUST stay
-   absolute to float above content (this was the overlap bug). */
+   own relative box, while the error overlay MUST stay absolute to float
+   above content (this was the overlap bug). */
 .edge {
   isolation: isolate;
 }
@@ -1165,35 +1144,6 @@ body.paused .pause-btn .ico-play { display: inline-block; }
     inset 0 0 0 1.5px rgba(255, 255, 255, 0.03),
     0 0 0 1px rgba(0, 0, 0, 0.55),
     0 6px 18px rgba(0, 0, 0, 0.25);
-}
-
-/* Decorative corner brackets around the whole window */
-.corner-brackets {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: 5;
-  opacity: 0.85;
-}
-
-.cb {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 1.75;
-  stroke-linecap: round;
-  vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 0 3px var(--accent-soft));
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: bracket-in 1.4s var(--ease) 0.25s forwards;
-}
-
-.cb-tr, .cb-bl { animation-delay: 0.4s; }
-
-@keyframes bracket-in {
-  to { stroke-dashoffset: 0; }
 }
 
 /* Floating sparkles */
@@ -1352,8 +1302,7 @@ body.paused .pause-btn .ico-play { display: inline-block; }
    (~320-640px wide, ~190-420px tall). Sits last so it always wins.
    ============================================================ */
 
-/* Overlap-proofing: popover & error overlay must always float above content */
-.settings-popover,
+/* Overlap-proofing: error overlay must always float above content */
 .error-overlay {
   position: absolute;
 }
@@ -1383,13 +1332,11 @@ body.paused .pause-btn .ico-play { display: inline-block; }
   .spinner-core { width: 15px; height: 15px; }
   .toast { padding: 6px 11px; }
   .toast-container { bottom: 8px; }
-  .settings-popover { top: 38px; }
   #progress-bytes { max-width: 84px; }
 }
 
 /* Ultra-compact: very short windows (~195-205px tall) */
 @media (max-height: 206px) {
-  .corner-brackets { opacity: 0.45; }
   .spark { display: none; }
   .stat-card { padding: 4px 6px; }
   .stat-card .label { letter-spacing: 0.5px; }
@@ -1413,4 +1360,185 @@ body.paused .pause-btn .ico-play { display: inline-block; }
   .graph-container { height: 46px; }
   .stat-card { padding: 9px 12px; }
   .stat-card .value { font-size: 12.5px; }
+}
+
+/* ============================================================
+   SETTINGS WINDOW (data-win="settings")
+   Frameless draggable window that reuses the accent system.
+   ============================================================ */
+body[data-win="settings"] {
+  background: transparent;
+  font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+
+.settings-shell {
+  position: absolute;
+  inset: 6px;
+  border-radius: 14px;
+  background: rgba(14, 18, 27, 0.96);
+  border: 1px solid rgba(var(--accent-rgb), 0.28);
+  box-shadow: 0 0 22px rgba(var(--accent-rgb), 0.12);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 8px;
+  cursor: grab;
+}
+
+.settings-head:active { cursor: grabbing; }
+
+.settings-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  background: linear-gradient(90deg,
+    #fff 0%, rgba(var(--accent-rgb), 1) 50%, #fff 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.settings-body {
+  flex: 1;
+  padding: 6px 14px 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-section { gap: 4px; opacity: 1; }
+.settings-divider {
+  font-size: 9.5px;
+  margin: 0 0 6px;
+}
+
+/* ---------- TRAY MENU (data-win="tray") ---------- */
+body[data-win="tray"] {
+  background: transparent;
+  font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+
+.tray-shell {
+  position: absolute;
+  inset: 6px;
+  border-radius: 13px;
+  background: linear-gradient(160deg, rgba(17, 22, 33, 0.97), rgba(10, 14, 22, 0.97));
+  border: 1px solid rgba(var(--accent-rgb), 0.3);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55), 0 0 18px rgba(var(--accent-rgb), 0.1);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: tray-in 0.14s var(--ease);
+}
+
+@keyframes tray-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+body.reduce-motion .tray-shell { animation: none; }
+
+.tray-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 14px 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: grab;
+}
+
+.tray-head:active { cursor: grabbing; }
+
+.tray-logo {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  background: linear-gradient(90deg,
+    #fff 0%, rgba(var(--accent-rgb), 1) 55%, rgba(var(--accent-rgb), 0.5) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.tray-body {
+  flex: 1;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.tray-action {
+  all: unset;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.14s var(--ease);
+}
+
+.tray-action:hover { background: rgba(var(--accent-rgb), 0.1); }
+.tray-action:active { background: rgba(var(--accent-rgb), 0.18); }
+
+.tray-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  gap: 10px;
+}
+
+.tray-label {
+  color: #e8ecf4;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+}
+
+.tray-hint {
+  color: rgba(232, 236, 244, 0.38);
+  font-size: 10px;
+}
+
+.tray-quit .tray-label {
+  color: #ff8b8b;
+  text-shadow: 0 0 10px rgba(255, 90, 90, 0.35);
+}
+
+.tray-check {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+
+.tray-check.on {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-dim);
+}
+
+.tray-check.on::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #0e121b;
+}
+
+.tray-sep {
+  height: 1px;
+  margin: 3px 10px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.09), transparent);
 }

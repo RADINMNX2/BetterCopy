@@ -3,9 +3,11 @@ use std::sync::atomic::{AtomicBool, Ordering, AtomicU64};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{Manager, Emitter, Listener};
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::TrayIconBuilder;
+use tauri::{Manager, Emitter, Listener, WindowEvent};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState};
+
+mod win_mgr;
+use win_mgr::{TrayState, toggle_tray_menu};
 
 #[derive(Clone, serde::Serialize)]
 struct StartPayload {
@@ -56,10 +58,23 @@ pub fn run() {
             let _ = window.set_focus();
         }
     }))
+    .invoke_handler(tauri::generate_handler![
+        win_mgr::open_main_window,
+        win_mgr::open_settings_window,
+        win_mgr::get_tray_state,
+        win_mgr::tray_action,
+    ])
     .setup(|app| {
       let app_handle = app.handle().clone();
       let window = app.get_webview_window("main").unwrap();
-      
+
+      // Persisted tray/app options
+      let tray_state = TrayState::new(&app_handle);
+      app.manage(tray_state);
+
+      // If "run as admin" is set but we're not elevated, relaunch fresh
+      win_mgr::ensure_admin_per_state(&app_handle);
+
       #[cfg(target_os = "windows")]
       {
           if window_vibrancy::apply_mica(&window, None).is_err() {
@@ -67,24 +82,30 @@ pub fn run() {
           }
       }
       
-      // Setup tray icon menu
-      let quit_item = MenuItemBuilder::new("Quit")
-          .id("quit")
-          .build(app)?;
-
-      let tray_menu = MenuBuilder::new(app)
-          .item(&quit_item)
-          .build()?;
-
+      // Tray icon - pure icon, toggles the tray-menu window on click
       let _tray = TrayIconBuilder::new()
           .icon(app.default_window_icon().unwrap().clone())
-          .menu(&tray_menu)
-          .on_menu_event(|app, event| {
-              if event.id() == "quit" {
-                  app.exit(0);
+          .tooltip("BetterCopy")
+          .on_tray_icon_event(|tray, event| {
+              if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                  let _ = toggle_tray_menu(tray.app_handle());
               }
           })
           .build(app)?;
+
+      // Hidden tray-menu window shown near the taskbar when the tray icon is clicked
+      let _ = app.get_webview_window("tray-menu").unwrap().hide();
+
+      // Closing the main window defers to the close-to-tray preference
+      {
+          let win = window.clone();
+          window.on_window_event(move |event| {
+              if let WindowEvent::CloseRequested { api, .. } = event {
+                  api.prevent_close();
+                  let _ = win.hide();
+              }
+          });
+      }
       
       // Create channel for copy jobs
       let (copy_tx, copy_rx) = std::sync::mpsc::channel::<Job>();
